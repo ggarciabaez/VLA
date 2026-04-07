@@ -2,4 +2,17 @@
 name = "vla"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "datasets>=4.8.4",
+    "gymnasium>=1.2.3",
+    "imageio[ffmpeg]>=2.37.3",
+    "metaworld>=3.0.0",
+    "mujoco>=3.6.0",
+    "numpy>=2.2.6",
+    "opencv-python>=4.13.0.92",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "tqdm>=4.67.3",
+    "transformers>=5.5.0",
+    "wandb>=0.25.1",
+]
