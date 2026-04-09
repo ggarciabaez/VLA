@@ -14,8 +14,8 @@ class VLAConfig:
 
     # Action expert
     action_layers: int = 4
-    chunk_size: int = 16
-    flow_steps: int = 16
+    chunk_size: int = 10
+    flow_steps: int = 10
     flow_dim: int = 256
     action_heads: int = 4
 

@@ -63,8 +63,15 @@ if __name__ == "__main__":
     img = torch.randn(1, 3, 224, 224, device=device)
     txt = torch.tensor([[262, 266, 1357, 267, 262, 266, 1571, 1]], device=device)
     state = torch.randn(1, 1, 39, device=device)
-    out = vla.act(img, txt, state)
-    print(out.size())
+    # a bit of warmup
+    for i in range(10):
+        out = vla.loss(img, txt, state, torch.randn(1, 4, device=device))
+    print(out)
+    import time
+    s = time.perf_counter()
+    for i in range(100):
+        out = vla.act(img, txt, state)
+    print(f"Time: {100/(time.perf_counter() - s)}")
 
     total, trainable = print_model_counts(vla)
     print(f"Total params:     {total:,}")
