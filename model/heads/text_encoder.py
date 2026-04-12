@@ -1,4 +1,5 @@
-from transformers import SiglipTextModel
+from transformers import SiglipTextModel, logging
+logging.set_verbosity_error()
 from torch import nn
 from utils import VLAConfig, freeze_except_last_n_layers
 
@@ -9,7 +10,9 @@ class TextEncoder(nn.Module):
         self.backbone = SiglipTextModel.from_pretrained(cfg.siglip_model_id)
         self.hidden_size = int(self.backbone.config.hidden_size)
         # TODO: could be a good idea to just always have a projection for a new embedding space
-        self.proj = nn.Identity() if self.cfg.d_model <= 0 or self.cfg.d_model == self.hidden_size else nn.Linear(self.hidden_size, self.cfg.d_model)
+        if cfg.d_model <= 0:
+            cfg.d_model = self.hidden_size
+        self.proj = nn.Linear(self.hidden_size, self.cfg.d_model)
         self.backbone = freeze_except_last_n_layers(self.backbone, cfg.n_trainable, model_type="text")
 
 

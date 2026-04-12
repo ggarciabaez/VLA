@@ -9,13 +9,13 @@ class VLAConfig:
     # Fusion transformer
     d_model: int = 768  # set this at 0 to use siglip default
     n_heads: int = 6
-    n_layers: int = 4
+    n_layers: int = 8
     # ffn_dim is d_model * 4
 
     # Action expert
     action_layers: int = 4
     chunk_size: int = 10
-    flow_steps: int = 10
+    flow_steps: int = 4
     flow_dim: int = 256
     action_heads: int = 4
 
@@ -35,15 +35,6 @@ class VLAConfig:
     # normalization stats, make sure to catch these before training
     action_mean = [0.0, 0.0, 0.0, 0.0]
     action_std = [1.0, 1.0, 1.0, 1.0]
-
-@dataclass
-class FlowMatchingConfig:
-    action_dim: int = 4
-    cond_dim: int = 128
-    t_embed_dim: int = 32
-    sample_steps: int = 32
-    hidden_dim: int = 256
-
 
 def freeze_except_last_n_layers(model, n_unfrozen_layers, model_type="vision"):
     """

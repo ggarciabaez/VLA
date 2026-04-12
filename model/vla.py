@@ -1,9 +1,10 @@
 from torch import nn
 import torch
 from heads import *
-from fusion import FusionTransformer
+from refusion import FusionTransformer
 from action import FlowMatchingHead
 from utils import VLAConfig
+
 class VLA(nn.Module):
     def __init__(self, cfg: VLAConfig, device: torch.device = torch.device("cuda")):
         super(VLA, self).__init__()
@@ -24,17 +25,15 @@ class VLA(nn.Module):
 
     def encode(self, img, txt, state):
         """
-                :param img: (B, C, H, W) tensor containing a normalized image
-                :param txt: (B, T) tensor containing a tokenized string
-                :param state: (B, 1, d_state) tensor containing the robot state
-                :return: something ig
-                """
+        :param img: (B, C, H, W) tensor containing a normalized image
+        :param txt: (B, T) tensor containing a tokenized string
+        :param state: (B, 1, d_state) tensor containing the robot state
+        :return: (B, P+T+1, d_model) tensor containing the encoded representation with attended text tokens for language grounding.
+        """
         img_enc = self.img_encoder(img)
         txt_enc, mask = self.txt_encoder(txt)
         state_enc = self.state_encoder(state)
-
-        fused = self.fusion_core.forward(img_enc, txt_enc, state_enc, mask)
-        return fused
+        return self.fusion_core.forward(img_enc, txt_enc, state_enc, mask)
 
     # the arch. good f*cking update.
     def loss(self, img, txt, state, action):
@@ -58,22 +57,28 @@ def print_model_counts(model):
 
 if __name__ == "__main__":
     device = torch.device("cuda")
-    cfg = VLAConfig()
-    vla = VLA(cfg).to(device)
-    img = torch.randn(1, 3, 224, 224, device=device)
-    txt = torch.tensor([[262, 266, 1357, 267, 262, 266, 1571, 1]], device=device)
-    state = torch.randn(1, 1, 39, device=device)
-    # a bit of warmup
-    for i in range(10):
-        out = vla.loss(img, txt, state, torch.randn(1, 4, device=device))
-    print(out)
-    import time
-    s = time.perf_counter()
-    for i in range(100):
-        out = vla.act(img, txt, state)
-    print(f"Time: {100/(time.perf_counter() - s)}")
+    cfg = VLAConfig(n_layers=8)
+    vla = VLA(cfg).to(device).eval()
+    B = 3
+    img = torch.randn(B, 3, 224, 224, device=device)
+    txt = torch.tensor([[262, 266, 1357, 267, 262, 266, 1571, 1]]*B, device=device)
+    state = torch.randn(B, 1, 39, device=device)
+    with torch.inference_mode():
+        encoded = vla.encode(img, txt, state)
+        print("Encoded state shape:", encoded.shape)
+        # a bit of warmup
+        for i in range(10):
+            out = vla.loss(img, txt, state, torch.randn(B, cfg.chunk_size, 4, device=device))
+        print(out)
+        import time
+        s = time.perf_counter()
+        for i in range(100):
+            out = vla.act(img, txt, state)
+        print(f"Time: {100/(time.perf_counter() - s)}")
 
-    total, trainable = print_model_counts(vla)
-    print(f"Total params:     {total:,}")
-    print(f"Trainable params: {trainable:,}")
-    print(f"Frozen params:    {total - trainable:,}")
+        total, trainable = print_model_counts(vla)
+        print(f"Total params:     {total:,}")
+        print(f"Trainable params: {trainable:,}")
+        print(f"Frozen params:    {total - trainable:,}")
+        print(f"Total flops:      {total * 2 * 1e-9:.2f} GFLOPs")
+        print(out.shape)
