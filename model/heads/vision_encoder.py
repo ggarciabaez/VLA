@@ -27,23 +27,47 @@ class VisionEncoder(nn.Module):
             x = x.float() / 255.0
         else:
             x = x.float()
+        x = (x - self.mean) / self.std  # normalize
+        if x.ndim == 4:
+            return self.singleforward(x)
+        elif x.ndim == 5:
+            return self.multiforward(x)
+        else:
+            raise ValueError("Unsupported amount of dimensions.")
 
+    def singleforward(self, x: torch.Tensor) -> torch.Tensor:
         if x.shape[-2:] != (self.image_size, self.image_size):
             x = F.interpolate(x, size=(self.image_size, self.image_size), mode="bilinear", align_corners=False)
 
-        x = (x - self.mean) / self.std  # normalize
         out = self.backbone(pixel_values=x, return_dict=True)
         return self.proj(out.last_hidden_state)
+
+    def multiforward(self, x: torch.Tensor) -> torch.Tensor:
+        out = torch.empty(x.shape[0], 0, self.cfg.d_model, device=x.device)
+        rsz = x[:, 0].shape[-2:] != (self.image_size, self.image_size)
+        for i in range(x.shape[1]):
+            if rsz:
+                img = F.interpolate(x[:, i], size=(self.image_size, self.image_size), mode="bilinear", align_corners=False)
+            else:
+                img = x[:, i]
+            out = torch.cat([out, self.proj(self.backbone(pixel_values=img, return_dict=True).last_hidden_state)], axis=1)
+
+        return out
 
 if __name__ == "__main__":
     # test the model
     import cv2
     cam = cv2.VideoCapture(0)
     ret, frame = cam.read()
+    ret, frame2 = cam.read()
+    frame = torch.from_numpy(frame).permute(2, 0, 1).unsqueeze(0)
+    frame2 = torch.from_numpy(frame2).permute(2, 0, 1).unsqueeze(0)
+    frames = torch.cat([frame.unsqueeze(1), frame2.unsqueeze(1)], axis=1)
+    print(frames.shape)
     cam.release()
     cfg = VLAConfig()
     encoder = VisionEncoder(cfg)
     out = encoder.forward(
-        torch.from_numpy(frame).permute(2, 0, 1).unsqueeze(0).to(torch.float32)/255.0
+        frame
     )
     print(out.shape)

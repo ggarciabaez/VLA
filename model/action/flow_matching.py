@@ -67,15 +67,17 @@ class FlowMatchingHead(nn.Module):
         return F.mse_loss(v_pred, target_v)
 
     @torch.no_grad()
-    def sample(self, context: torch.Tensor) -> torch.Tensor:
+    def sample(self, context: torch.Tensor, return_trajectory: bool = False) -> torch.Tensor:
         B  = context.size(0)
         dt = 1.0 / self.flow_steps
-
         x_t = torch.randn(B, self.chunk_size, self.action_dim, device=context.device)
-
+        outputs = [x_t]
         for step in range(self.flow_steps):
             t = torch.full((B,), step * dt, device=context.device)
             v = self.expert(x_t, t, context)
             x_t = x_t + v * dt
-
-        return x_t  # (B, C, action_dim)
+            if return_trajectory:
+                outputs.append(x_t.clone())
+        if return_trajectory:
+            return x_t, outputs  # (B, C, action_dim)
+        return x_t

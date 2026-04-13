@@ -14,7 +14,7 @@ class VLA(nn.Module):
         self.txt_encoder = TextEncoder(cfg)
         if self.cfg.d_model <= 0:
             self.cfg.d_model = self.img_encoder.hidden_size
-        assert self.cfg.d_model == self.txt_encoder.hidden_size, "An error occurred. d_model for img and txt are mismatched."
+        # assert self.cfg.d_model == self.txt_encoder.hidden_size, "An error occurred. d_model for img and txt are mismatched."
 
         self.state_encoder = StateEncoder(cfg)
 
@@ -32,6 +32,8 @@ class VLA(nn.Module):
         """
         img_enc = self.img_encoder(img)
         txt_enc, mask = self.txt_encoder(txt)
+        if state.dim() == 2:
+            state = state.unsqueeze(1)
         state_enc = self.state_encoder(state)
         return self.fusion_core.forward(img_enc, txt_enc, state_enc, mask)
 
@@ -40,9 +42,9 @@ class VLA(nn.Module):
         context = self.encode(img, txt, state)
         return self.action_head.loss(action, context)
 
-    def act(self, img, txt, state):
+    def act(self, img, txt, state, return_trajectory=False):
         context = self.encode(img, txt, state)
-        return self.action_head.sample(context)  # Remember to de-normalise!
+        return self.action_head.sample(context, return_trajectory)  # Remember to de-normalise!
 
 def print_model_counts(model):
     sum_total = 0

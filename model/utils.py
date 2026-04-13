@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class VLAConfig:
+    model_name: str = "vla"  # not used anywhere, still nice for metadata
     siglip_model_id: str = "google/siglip-base-patch16-224"
     n_trainable: int = 4
     dropout: float = 0.1
@@ -25,6 +26,10 @@ class VLAConfig:
     # head configs
     img_size: int = 224
 
+    # normalization stats, make sure to catch these before training
+    action_mean: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
+    action_std: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
+
     type_ids: dict = field(default_factory=lambda: {
         "vision": 0,
         "text": 1,
@@ -32,9 +37,7 @@ class VLAConfig:
         # other types of data get added here, things like oh idk, depth?? wink wink
     })
 
-    # normalization stats, make sure to catch these before training
-    action_mean = [0.0, 0.0, 0.0, 0.0]
-    action_std = [1.0, 1.0, 1.0, 1.0]
+
 
 def freeze_except_last_n_layers(model, n_unfrozen_layers, model_type="vision"):
     """
