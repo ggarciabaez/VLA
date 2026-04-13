@@ -22,16 +22,16 @@ from model.utils import VLAConfig
 # =========================
 # Colab Config (edit here)
 # =========================
-DATA_DIR = "/content/data"
-CHECKPOINT_DIR = "/content/checkpoints"
+DATA_DIR = "../data/dataset_shards/mt50"
+CHECKPOINT_DIR = "../data/dataset_shards/checkpoints"
 PROMPTS_JSON = "task_prompts.json"
 EPISODE_GLOB = "ep*.npz"
 MAX_EPISODE_FILES = None  # int or None
 
 SEED = 42
 VAL_SPLIT = 0.1
-BATCH_SIZE = 128
-NUM_WORKERS = 2
+BATCH_SIZE = 64
+NUM_WORKERS = 4
 PIN_MEMORY = True
 PERSISTENT_WORKERS = True
 
@@ -51,10 +51,10 @@ MODEL_KWARGS = dict(
     d_model=768,
     n_heads=6,
     n_layers=8,
-    fusion_latents=32,
+    latent_size=64,
     action_heads=6,
     action_layers=4,
-    chunk_size=10,
+    chunk_size=20,
     flow_steps=10,
     dropout=0.1,
 )

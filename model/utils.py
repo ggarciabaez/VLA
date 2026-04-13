@@ -11,15 +11,15 @@ class VLAConfig:
     d_model: int = 768  # set this at 0 to use siglip default
     n_heads: int = 6
     n_layers: int = 8
-    fusion_latents: int = 32
+    latent_size: int = 64
     # ffn_dim is d_model * 4
 
     # Action expert
-    action_layers: int = 4
-    chunk_size: int = 10
-    flow_steps: int = 4
-    flow_dim: int = 256
     action_heads: int = 4
+    action_layers: int = 4
+    chunk_size: int = 50
+    flow_steps: int = 10
+    flow_dim: int = 256
 
     state_dim: int = 39  # your input twin
     action_dim: int = 4  # your output twin

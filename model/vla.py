@@ -59,8 +59,8 @@ def print_model_counts(model):
 
 if __name__ == "__main__":
     device = torch.device("cuda")
-    cfg = VLAConfig(n_layers=8)
-    vla = VLA(cfg).to(device).eval()
+    cfg = VLAConfig()
+    vla = VLA(cfg, device).to(device).eval()
     B = 3
     img = torch.randn(B, 3, 224, 224, device=device)
     txt = torch.tensor([[262, 266, 1357, 267, 262, 266, 1571, 1]]*B, device=device)

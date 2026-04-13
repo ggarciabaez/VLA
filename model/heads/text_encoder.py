@@ -19,10 +19,10 @@ class TextEncoder(nn.Module):
     def forward(self, tokens):
         """
         Encodes text tokens into (B, T, d_model) tensors. T is variable depending on string length.
-        :param tokens: Tokenized strings as a tensor. Remember to move to the proper device!
-        :return: Text embeddings of dimension d_model, as well as the padding mask.
+        :param tokens: Tokenized (B, Tk) strings as a tensor. Remember to move to the proper device!
+        :return: Text embeddings of dimension d_model, as well as the padding mask. The padding mask is False for padding tokens.
         """
-        return self.proj(self.backbone(tokens).last_hidden_state), tokens==1
+        return self.proj(self.backbone(tokens).last_hidden_state), tokens!=1
 
 
 if __name__ == "__main__":

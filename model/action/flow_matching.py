@@ -14,7 +14,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from model.utils import VLAConfig
-from .action_expert import ActionExpert
+try:
+    from .action_expert import ActionExpert
+except ImportError:
+    from action_expert import ActionExpert
 
 
 # ── Flow Matching Head ─────────────────────────────────────────────────────────
@@ -82,3 +85,7 @@ class FlowMatchingHead(nn.Module):
         if return_trajectory:
             return x_t, outputs  # (B, C, action_dim)
         return x_t
+
+if __name__ == "__main__":
+    fm = FlowMatchingHead(VLAConfig())
+    print(fm.sample(torch.randn(1, 64, 768)))

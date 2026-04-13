@@ -1,6 +1,6 @@
 from torch import nn
 import torch, math
-
+from model.mha_impl import MultiHeadAttention
 
 class SinusoidalTimeEmbedding(nn.Module):
     def __init__(self, dim: int):
@@ -43,14 +43,14 @@ class ActionExpertLayer(nn.Module):
 
         # self-attention
         self.norm1      = nn.LayerNorm(d_model)
-        self.self_attn  = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True
+        self.self_attn  = MultiHeadAttention(
+            d_model, n_heads, dropout=dropout
         )
 
         # cross-attention — action tokens query context tokens
         self.norm2      = nn.LayerNorm(d_model)
-        self.cross_attn = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True
+        self.cross_attn = MultiHeadAttention(
+            d_model, n_heads, dropout=dropout, is_cross=True
         )
 
         # FFN
@@ -70,17 +70,13 @@ class ActionExpertLayer(nn.Module):
     ) -> torch.Tensor:
 
         # 1. self-attention over action chunk (Pre-LN)
-        h = self.norm1(x)
-        h, _ = self.self_attn(h, h, h)
-        x = x + h
+        x = x + self.self_attn.forward(self.norm1(x))
 
         # 2. cross-attention: action tokens query context tokens (Pre-LN)
         #    Q = action tokens, K = V = context tokens
         #    do NOT swap these — action tokens are asking questions,
         #    context tokens hold the answers
-        h = self.norm2(x)
-        h, _ = self.cross_attn(h, context, context)
-        x = x + h
+        x = x + self.cross_attn(self.norm2(x), context, context)
 
         # 3. FFN (Pre-LN)
         x = x + self.ffn(self.norm3(x))
