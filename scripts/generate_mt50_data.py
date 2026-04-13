@@ -174,7 +174,6 @@ if __name__ == "__main__":
     all_actions, all_states = [], []
     for i in range(EPISODES):
         dirname = SAVE_DIR+f"/ep{i:04d}"
-        print(dirname)
         for fname in sorted(os.listdir(dirname)):
             if not fname.endswith(".npz") or "norm_stats" in fname:
                 continue
