@@ -3,7 +3,7 @@ logging.set_verbosity_error()
 from torch import nn
 import torch
 from torch.functional import F
-from utils import VLAConfig, freeze_except_last_n_layers
+from model.utils import VLAConfig, freeze_except_last_n_layers
 
 class VisionEncoder(nn.Module):
     def __init__(self, cfg: VLAConfig):
@@ -27,6 +27,9 @@ class VisionEncoder(nn.Module):
             x = x.float() / 255.0
         else:
             x = x.float()
+            # Some callers pass float images still in 0..255 range.
+            if x.max() > 1.5:
+                x = x / 255.0
         x = (x - self.mean) / self.std  # normalize
         if x.ndim == 4:
             return self.singleforward(x)

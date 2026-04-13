@@ -1,5 +1,5 @@
 from torch import nn
-from utils import VLAConfig
+from model.utils import VLAConfig
 
 class StateEncoder(nn.Module):
     def __init__(self, cfg: VLAConfig):

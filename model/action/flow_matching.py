@@ -13,7 +13,7 @@ Components:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import VLAConfig
+from model.utils import VLAConfig
 from .action_expert import ActionExpert
 
 
@@ -46,6 +46,7 @@ class FlowMatchingHead(nn.Module):
             n_heads=cfg.action_heads,
             n_layers=cfg.action_layers,
             ffn_dim=cfg.d_model * 4,
+            chunk_size=cfg.chunk_size,
             dropout=cfg.dropout,
         )
 

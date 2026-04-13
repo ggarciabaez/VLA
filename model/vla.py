@@ -1,9 +1,9 @@
 from torch import nn
 import torch
-from heads import *
-from refusion import FusionTransformer
-from action import FlowMatchingHead
-from utils import VLAConfig
+from model.heads import *
+from model.refusion import FusionTransformer
+from model.action import FlowMatchingHead
+from model.utils import VLAConfig
 
 class VLA(nn.Module):
     def __init__(self, cfg: VLAConfig, device: torch.device = torch.device("cuda")):

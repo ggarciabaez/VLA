@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from utils import VLAConfig
+from model.utils import VLAConfig
 
 
 class FusionTransformer(nn.Module):

@@ -1,7 +1,7 @@
 from transformers import SiglipTextModel, logging
 logging.set_verbosity_error()
 from torch import nn
-from utils import VLAConfig, freeze_except_last_n_layers
+from model.utils import VLAConfig, freeze_except_last_n_layers
 
 class TextEncoder(nn.Module):
     def __init__(self, cfg: VLAConfig):

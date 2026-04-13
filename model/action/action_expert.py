@@ -90,12 +90,21 @@ class ActionExpertLayer(nn.Module):
 
 class ActionExpert(nn.Module):
     def __init__(
-        self, action_dim: int, d_model: int, n_heads: int, n_layers: int, ffn_dim: int, dropout: float = 0.05
+        self,
+        action_dim: int,
+        d_model: int,
+        n_heads: int,
+        n_layers: int,
+        ffn_dim: int,
+        chunk_size: int,
+        dropout: float = 0.05,
     ):
         super().__init__()
 
+        self.chunk_size = chunk_size
         self.action_proj = nn.Linear(action_dim, d_model)
         self.time_emb    = SinusoidalTimeEmbedding(d_model)
+        self.pos_emb = nn.Embedding(chunk_size, d_model)
 
         self.layers = nn.ModuleList([
             ActionExpertLayer(d_model, n_heads, ffn_dim, dropout)
@@ -116,6 +125,12 @@ class ActionExpert(nn.Module):
     ) -> torch.Tensor:
 
         x = self.action_proj(x_t)  # project onto model space
+        C = x.size(1)
+        if C > self.chunk_size:
+            raise ValueError(f"Chunk length {C} exceeds configured chunk_size={self.chunk_size}")
+
+        pos = torch.arange(C, device=x.device)
+        x = x + self.pos_emb(pos).unsqueeze(0)
         # add time embedding — same t for all steps in the chunk
         t_emb = self.time_emb(t).unsqueeze(1)           # (B, 1, d_model)
         x = x + t_emb                                   # broadcasts to (B, C, d_model)

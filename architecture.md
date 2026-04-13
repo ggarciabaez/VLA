@@ -1,354 +1,190 @@
-# MT50 VLA — Architecture & Data Flow
+# VLA Architecture (Current)
+
+## Goal
+A lightweight Vision-Language-Action policy for MetaWorld-style control that:
+- keeps context computation bounded for edge deployment,
+- preserves multimodal conditioning,
+- predicts action chunks with conditional flow matching.
+
+## High-Level Pipeline
+
+```text
+image(s), text tokens, state
+  -> modality encoders (vision/text/state)
+  -> latent-bottleneck fusion transformer
+  -> flow-matching action expert
+  -> action chunk (C x action_dim)
+```
+
+Model entrypoint: `model/vla.py` (`VLA` class).
 
 ---
 
-## Overview
+## Inputs
 
-The model is a Vision-Language-Action (VLA) policy that maps raw observations
-(images, proprioceptive state, language instruction) to a chunk of future actions
-via conditional flow matching. It is designed to be compact enough to run on a
-Jetson Orin Nano at ~4Hz inference with 30Hz control, using a C=8 action chunk.
+### Runtime inference inputs
+- `img`: `(B, 3, H, W)` or `(B, N_img, 3, H, W)`
+- `txt`: `(B, T)` token IDs
+- `state`: `(B, state_dim)` or `(B, 1, state_dim)`
 
-```
-┌─────────────┐  ┌─────────────┐  ┌──────────────┐
-│  Image(s)   │  │    Text     │  │    State     │
-│ (H,224,224) │  │  (token IDs)│  │  (H, s_dim) │
-└──────┬──────┘  └──────┬──────┘  └──────┬───────┘
-       │                │                │
-  SigLIP ViT      SigLIP Text       Linear +
-  (partial FT)    (partial FT)      LayerNorm
-       │                │                │
-  patch tokens    text tokens       state tokens
-  (H, P, d)       (T, d)            (H, 1, d)
-       │                │                │
-       └────────────────┴────────────────┘
-                        │
-              Token assembly + type/history embeddings
-                        │
-              ┌─────────▼──────────┐
-              │  Fusion Transformer │
-              │  4 layers, 6 heads  │
-              │  d_model = 384      │
-              └─────────┬──────────┘
-                        │
-                context tokens (B, N_ctx, 384)
-                        │
-              ┌─────────▼──────────┐    ← noisy action chunk (B, C, a_dim)
-              │   Action Expert     │    ← time embedding t ∈ [0,1]
-              │  Transformer, 4L   │
-              │  self-attn + xattn │
-              └─────────┬──────────┘
-                        │
-                velocity field v̂ (B, C, a_dim)
-                        │
-              Euler integration (10 steps)
-                        │
-                action chunk (B, C, a_dim)
-```
+### Training data layout (episode shards)
+Each episode `.npz` stores:
+- `images`: `(steps, tasks, ...)`
+- `states`: `(steps, tasks, state_dim)`
+- `actions`: `(steps, tasks, action_dim)`
+- `chunk_indices`: `(steps, chunk_size)`
+- `task_names`: `(tasks,)` (or legacy `task_name`)
+
+Chunk targets are reconstructed as:
+- `chunk = actions[chunk_indices[t], task_id]` -> `(chunk_size, action_dim)`
 
 ---
 
-## Components
+## Encoders
 
-### 1. Vision Encoder
+### Vision encoder (`model/heads/vision_encoder.py`)
+- Backbone: `SiglipVisionModel` (`google/siglip-base-patch16-224`)
+- Output projection: hidden size -> `d_model`
+- Supports single or multiple images per sample.
+- Normalization:
+  - `uint8` is scaled to `[0,1]`
+  - `float` inputs are treated as normalized; if range looks like `0..255`, they are auto-scaled.
 
-**Module**: `HFSiglipViT` (SigLIP ViT-B/16)  
-**Pretrained**: `google/siglip-base-patch16-224`  
-**Trainable**: Last 2 encoder layers + projection. All earlier layers frozen.
+Output shape:
+- single image: `(B, P, d_model)`
+- multi-image: `(B, N_img * P, d_model)`
 
-Accepts a raw uint8 image, normalizes it (mean=0.5, std=0.5 per channel),
-and runs it through the SigLIP vision transformer.
+### Text encoder (`model/heads/text_encoder.py`)
+- Backbone: `SiglipTextModel`
+- Output projection: hidden size -> `d_model`
+- Returns:
+  - text tokens: `(B, T, d_model)`
+  - text padding mask: `(B, T)` (`True` where token equals pad token id `1`)
 
-**Two output modes** (selected by `use_pooled`):
-
-| Mode | Output shape | When to use |
-|---|---|---|
-| Pooled (CLS) | `(B, d_hidden)` | Faster, lower memory |
-| Unpooled (patches) | `(B, 196, d_hidden)` | Richer spatial info |
-
-`d_hidden = 768` for ViT-B/16. A linear projection maps this to `d_model = 384`.
-
-**With history** (H frames): images are encoded independently then stacked.
-```
-(B, H, 3, 224, 224) → flatten to (B*H, 3, 224, 224) → encode → reshape to (B, H, [P,] d_model)
-```
-
-**With multiple cameras**: encode each camera independently, producing separate
-token sequences. Each gets its own type embedding ID in the fusion transformer.
-The sequence length grows but no architectural change is needed.
+### State encoder (`model/heads/state_encoder.py`)
+- `Linear(state_dim, d_model) + LayerNorm`
+- Output: `(B, 1, d_model)`
 
 ---
 
-### 2. Text Encoder
+## Fusion Core: Latent Bottleneck
 
-**Module**: `SiglipTextModel`  
-**Pretrained**: `google/siglip-base-patch16-224` (text tower)  
-**Trainable**: Last 2 encoder layers + projection. All earlier layers frozen.
+File: `model/refusion.py`
 
-Accepts tokenized text (int64 token IDs + attention mask). Outputs either:
-- Pooled: `(B, d_hidden)` — the CLS/pooler token
-- Unpooled: `(B, T, d_hidden)` — full token sequence, where T varies with prompt length
+### Core idea
+Instead of letting downstream modules attend over all multimodal tokens directly, use a fixed number of learned latent tokens (`fusion_latents`) that compress image/text/state information.
 
-**Variable token length**: T varies with the prompt. Use the unpooled output
-and pass the attention mask through to the fusion transformer. Padding positions
-are masked out in the attention computation.
+Benefits:
+- fixed context length for action head,
+- lower and predictable memory/latency,
+- better edge deployment characteristics.
 
-A linear projection maps `d_hidden → d_model`. Text is encoded once per episode
-step (not per chunk step).
+### Flow
+1. Add type embeddings to each modality (`vision`, `text`, `state`).
+2. Build memory sequence:
+   - `memory = concat([img_tokens, txt_tokens, state_tokens], dim=1)`
+3. Initialize learned latents:
+   - `(1, fusion_latents, d_model)` -> broadcast to `(B, fusion_latents, d_model)`
+4. For each fusion layer:
+   - latent cross-attention to memory,
+   - latent self-attention,
+   - FFN.
+5. Return normalized latents.
 
----
-
-### 3. State Encoder
-
-**Module**: `StateEncoder`  
-**Architecture**: `nn.Linear(state_dim, d_model)` + `nn.LayerNorm(d_model)`  
-**Trainable**: Always fully trainable.
-
-The proprioceptive state (joint positions, velocities, gripper state) is projected
-directly to a single token per timestep. No activation — the transformer layers
-provide all necessary nonlinearity.
-
-```
-(B, H, state_dim) → (B, H, d_model)     # H tokens, one per history frame
-```
-
-State tokens share the history embedding with image tokens, so the transformer
-knows which timestep each state token corresponds to.
+Fusion output shape:
+- `(B, fusion_latents, d_model)`
 
 ---
 
-### 4. Token Assembly
+## Action Head: Flow Matching Expert
 
-Before entering the fusion transformer, all modality tokens are assembled into
-a single sequence. Each token receives two additive embeddings:
+Files:
+- `model/action/action_expert.py`
+- `model/action/flow_matching.py`
 
-**Type embedding** — learned `nn.Embedding(N_types, d_model)`, identifies the modality:
+### Core idea
+Predict velocity field on a continuous noise->action path.
 
-| ID | Modality |
-|---|---|
-| 0 | Image (camera 0) |
-| 1 | Text |
-| 2 | State |
-| 3 | Image (camera 1) — if present |
-| 4 | Image (wrist cam) — if present |
-| ... | extensible |
+### ActionExpert details
+Input:
+- noisy chunk `x_t`: `(B, C, action_dim)`
+- diffusion time `t`: `(B,)`
+- fused context latents: `(B, fusion_latents, d_model)`
 
-**History embedding** — learned `nn.Embedding(H, d_model)`, identifies the timestep
-within the observation window. Applied to image and state tokens only (broadcast
-over patch tokens). Text tokens have no history embedding (same prompt all steps).
+Processing:
+1. `action_proj`: `action_dim -> d_model`
+2. add learned chunk positional embedding (order-aware across chunk steps)
+3. add sinusoidal time embedding
+4. `N` transformer blocks:
+   - self-attention over action tokens,
+   - cross-attention from action tokens to fused latents,
+   - FFN
+5. project back to action space
 
-Final sequence (pooled mode, H=1, 1 camera):
-```
-[ img_token(t) | txt_tokens(1..T) | state_token(t) ]
-  shape: (B, 1 + T + 1, d_model)
-```
+Output:
+- predicted velocity `v_pred`: `(B, C, action_dim)`
 
-Final sequence (unpooled mode, H=2, 2 cameras):
-```
-[ img0_patches(t-1, 1..196) | img0_patches(t, 1..196)
-| img1_patches(t-1, 1..196) | img1_patches(t, 1..196)
-| txt_tokens(1..T)
-| state(t-1) | state(t) ]
-  shape: (B, 196*4 + T + 2, d_model)
-```
+### Flow-matching objective
+Given normalized target actions `x_1` and noise `x_0 ~ N(0, I)`:
+- `x_t = (1 - t) * x_0 + t * x_1`
+- `v_target = x_1 - x_0`
+- train with `MSE(v_pred, v_target)`
 
-**Padding for TensorRT**: at inference, pad all sequences to a fixed `max_tokens`
-with a boolean padding mask. The transformer ignores padded positions. This keeps
-the TensorRT engine shape static while allowing variable-length inputs at the
-Python/logic level.
-
----
-
-### 5. Fusion Transformer
-
-**Architecture**: `nn.TransformerEncoder` with Pre-LN layers  
-**Hyperparameters**: `d_model=384`, `n_layers=4`, `nhead=6`, `dim_feedforward=1536`, `dropout=0.05`  
-**Trainable**: Always fully trainable.
-
-Standard bidirectional transformer encoder. All tokens attend to all other tokens
-(full attention), so image patches can directly attend to text tokens and vice versa.
-This is where language grounding actually happens.
-
-```
-input:  (B, N_tokens, d_model)   + padding_mask (B, N_tokens)
-output: (B, N_tokens, d_model)   ← full sequence, no pooling
-```
-
-The output sequence is passed directly to the action expert as context tokens.
-There is no pooling step — the action expert consumes the full sequence via
-cross-attention, letting it selectively attend to whichever tokens are relevant
-for each action in the chunk.
+### Sampling
+- Initialize `x_t` as Gaussian noise.
+- Euler integrate for `flow_steps`:
+  - `x_t = x_t + v(x_t, t, context) * dt`
+- Return final normalized chunk.
+- De-normalization is applied outside the model with dataset stats.
 
 ---
 
-### 6. Action Expert
+## Configuration (VLAConfig)
 
-**Architecture**: Small transformer with interleaved self-attention and cross-attention  
-**Hyperparameters**: `d_model=384`, `n_layers=4`, GELU activations  
-**Trainable**: Always fully trainable.
+File: `model/utils.py`
 
-This is the flow matching velocity network. It takes:
-- Noisy action chunk `x_t` of shape `(B, C, action_dim)` at interpolation time `t`
-- Time embedding `t ∈ [0,1]` encoded as a sinusoidal vector, broadcast over the chunk
-- Context tokens from the fusion transformer `(B, N_ctx, d_model)`
-
-And predicts the velocity field `v̂(x_t, t | context)`.
-
-**Per-layer structure**:
-```
-action_tokens = self_attention(action_tokens)          # chunk coherence
-                                                       # adjacent actions coordinate
-action_tokens = cross_attention(action_tokens,         # conditioning on observation
-                                context_tokens)
-action_tokens = ffn(action_tokens)
-action_tokens = layer_norm(action_tokens)
-```
-
-Self-attention allows the model to enforce temporal consistency across the chunk
-(e.g., smooth trajectories, coordinated joint motion). Cross-attention lets each
-action token selectively query the full context — the reaching action attends to
-the object position, the grasp action attends to the gripper state token, etc.
-
-**Input/output projection**:
-```
-(B, C, action_dim) → Linear → (B, C, d_model)   # project up
-+ time_emb (B, d_model) broadcast to (B, C, d_model)
-→ N layers of self-attn + cross-attn + FFN
-→ Linear → (B, C, action_dim)                    # project back down = velocity v̂
-```
+Key fields:
+- `d_model`, `n_heads`, `n_layers`
+- `fusion_latents`
+- `action_layers`, `action_heads`, `chunk_size`, `flow_steps`
+- `state_dim`, `action_dim`
+- `siglip_model_id`, `n_trainable`
 
 ---
 
-## Flow Matching
+## Design Rationale
 
-The action expert is the velocity network in a conditional flow matching framework.
-Training uses a linear interpolation path between Gaussian noise and demonstrations.
+### 1) Bounded multimodal context
+A fixed latent bottleneck prevents context length explosion when adding text tokens or extra image views.
 
-### Training
+### 2) Better action ordering
+Chunk positional embeddings in the action expert make per-step order explicit, improving temporal structure in predicted chunks.
 
-```python
-# actions: (B, C, action_dim) — normalized ground truth chunk
-t     = torch.rand(B)                          # uniform in [0, 1]
-t_exp = t.reshape(B, 1, 1)                    # broadcast over C, action_dim
+### 3) Lightweight but expressive
+Most heavy lifting stays in pretrained SigLIP towers; trainable task-specific modules are compact (`state encoder`, `fusion`, `action head`).
 
-x_0 = torch.randn_like(actions)               # source: Gaussian noise
-x_t = (1 - t_exp) * x_0 + t_exp * actions    # interpolated point
-v_target = actions - x_0                      # constant velocity field
-
-v_pred = action_expert(x_t, t, context_tokens)
-loss   = F.mse_loss(v_pred, v_target)
-```
-
-The model learns to predict the straight-line velocity from wherever `x_t` is
-to the target action, conditioned on the current observation context.
-
-### Inference (Euler integration, 10 steps)
-
-```python
-x_t = torch.randn(B, C, action_dim)           # start at noise
-dt  = 1.0 / n_steps                           # = 0.1
-
-for step in range(n_steps):                   # 10 steps
-    t = torch.full((B,), step * dt)
-    v = action_expert(x_t, t, context_tokens)
-    x_t = x_t + v * dt
-
-action_chunk = denormalize(x_t)               # (B, C, action_dim)
-```
-
-10 Euler steps is sufficient for this task distribution. 32 steps (MT10) was
-conservative — the linear path means fewer steps are needed than in diffusion.
+### 4) Edge readiness
+Static-friendly dimensions (`img_size`, token length, chunk size, latent count) make the graph easier to optimize for deployment runtimes later.
 
 ---
 
-## Full Forward Pass — Data Flow
+## End-to-End Forward Contract
 
-```
-INPUTS (per observation step):
-  image:    (1, H, 3, 224, 224)  uint8
-  text_ids: (1, T)               int64    ← T varies with prompt
-  attn_mask:(1, T)               int64
-  state:    (1, H, state_dim)    float32  ← normalized
+```text
+img -> VisionEncoder -> img_tokens
+txt -> TextEncoder -> txt_tokens, txt_pad_mask
+state -> StateEncoder -> state_tokens
 
-ENCODE:
-  img_tokens  = siglip_vision(image)               → (1, H, [P,] d_model)
-  txt_tokens  = siglip_text(text_ids, attn_mask)   → (1, T,      d_model)
-  state_token = state_encoder(state)               → (1, H,      d_model)
+(img_tokens, txt_tokens, state_tokens, txt_pad_mask)
+  -> FusionTransformer
+  -> context_latents
 
-ASSEMBLE:
-  tokens = concat([img_tokens, txt_tokens, state_token], dim=1)
-           + type_embeddings + history_embeddings
-  → (1, N_tokens, d_model)
+(context_latents, noisy_action_chunk, t)
+  -> ActionExpert
+  -> velocity
 
-FUSE:
-  context = fusion_transformer(tokens, padding_mask)
-  → (1, N_tokens, d_model)
-
-SAMPLE (flow matching, 10 Euler steps):
-  x_t = randn(1, C, action_dim)
-  for step in 0..9:
-      v   = action_expert(x_t, t, context)
-      x_t = x_t + v * dt
-  → (1, C, action_dim)
-
-DENORMALIZE:
-  action_chunk = x_t * action_std + action_mean
-  → (1, C, action_dim)
-
-EXECUTE:
-  for each of C steps: env.step(action_chunk[step])
-  re-run inference before chunk exhausts
+FlowMatchingHead integrates velocity over time
+  -> normalized action chunk
 ```
 
----
-
-## Extending the Model
-
-Because the fusion transformer is purely sequence-based, adding new input
-modalities requires only:
-
-1. An encoder that maps the new input to tokens of shape `(B, N_new, d_model)`
-2. A new type embedding ID
-3. Concatenating the new tokens into the assembly step
-4. Updating `max_tokens` for the TensorRT padding budget
-
-**Examples**:
-- **Second camera**: encode with the same SigLIP encoder (shared or separate weights), type ID = 3
-- **Wrist camera**: same, type ID = 4. Patch tokens give the action expert fine-grained spatial info for grasping
-- **Force/torque**: linear projection to a single token per timestep, type ID = 5
-- **Task phase / subtask**: embed a discrete phase index, type ID = 6 — useful for long-horizon MT50 tasks
-
-No changes to the fusion transformer or action expert are needed in any of these cases.
-
----
-
-## Parameter Count (estimates)
-
-| Component | Parameters |
-|---|---|
-| SigLIP vision encoder (frozen) | ~86M |
-| SigLIP vision encoder (unfrozen last 2L) | ~7M trainable |
-| SigLIP text encoder (frozen) | ~35M |
-| SigLIP text encoder (unfrozen last 2L) | ~3M trainable |
-| Projection layers (img, txt, state) | ~0.4M |
-| Fusion transformer (4L, d=384, h=6) | ~9M |
-| Action expert (4L, d=384, xattn) | ~12M |
-| **Total trainable** | **~31M** |
-| **Total (incl. frozen)** | **~152M** |
-
-At FP16, the full model is ~300MB — well within the Orin Nano's 8GB unified memory.
-
----
-
-## Constants (set before training, fixed for TensorRT)
-
-| Symbol | Value | Description |
-|---|---|---|
-| `d_model` | 384 | Shared model dimension |
-| `H` | 1–3 | Observation history length |
-| `C` | 8 | Action chunk size |
-| `P` | 196 | Patches per image (14×14, ViT-B/16) |
-| `max_tokens` | 512 | Padding target for TensorRT |
-| `n_flow_steps` | 10 | Euler steps at inference |
-| `action_dim` | 4 | MetaWorld: (x, y, z, gripper) |
-| `state_dim` | varies | Task-dependent proprioception dim |
+This is the architecture implemented by the current codebase.

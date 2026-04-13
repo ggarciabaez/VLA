@@ -11,6 +11,7 @@ class VLAConfig:
     d_model: int = 768  # set this at 0 to use siglip default
     n_heads: int = 6
     n_layers: int = 8
+    fusion_latents: int = 32
     # ffn_dim is d_model * 4
 
     # Action expert

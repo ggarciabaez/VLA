@@ -20,12 +20,12 @@ if 1:
         CFG = dict(
             # paths
             checkpoint="../data/models/vlarge_best.pt",
-            norm_stats="../data/models/norm_stats.npz",
+            norm_stats="../data/models/norm_stats_first.npz",
 
             # task
-            env_name="basketball-v3",
+            env_name="coffee-push-v3",
             prompt="",
-            seed=42,
+            seed=37,
 
             # model — must match the checkpoint
             n_trainable=8,
@@ -34,7 +34,7 @@ if 1:
             n_layers=12,
             action_heads=8,
             action_layers=6,
-            chunk_size=10,
+            chunk_size=16,
             flow_steps=10,
             dropout=0.0,  # no dropout at eval time
 
@@ -48,7 +48,7 @@ if 1:
             norm_stats   = "../data/models/norm_stats_first.npz",
 
             # task
-            env_name     = "basketball-v3",
+            env_name     = "coffee-push-v3",
             prompt       = "",
             seed         = 37,
 
@@ -89,7 +89,7 @@ def denormalize(x, mean, std):
 def process_inputs(img, obs):
     if isinstance(img, (list, tuple)):  # multi img support
         sample = img[0].shape
-        imgs = torch.empty(0, *sample)
+        imgs = torch.empty(0, *sample, dtype=torch.uint8)
         for i in img:
             imgs = torch.cat([imgs, torch.from_numpy(i).unsqueeze(0)])  # So now, its (n_imgs, h, w, 3)
         img_t = imgs.permute(0, 3, 1, 2).unsqueeze(0).to(device)
@@ -106,6 +106,7 @@ def process_chunk(chunk, idx=None):
     if idx is None:
         return chunk
     return [chunk[idx]]
+
 print(action_mean, action_std)
 # action_mean = torch.tensor([-0.02170256,  0.841916,    0.36787212,  0.49599922], device=device)
 # action_std = torch.tensor([0.21761712, 1.417548,   2.2964888,  0.3944419 ], device=device)
@@ -132,6 +133,7 @@ assert not missing and not unexpected, f"State dict mismatch!\n  missing={missin
 print(f"Loaded checkpoint — epoch {ckpt.get('epoch', '?')}  "
       f"best_loss {ckpt.get('best_loss', float('nan')):.4f}")
 model = torch.compile(model)
+
 # ── Preprocess ────────────────────────────────────────────────────────────────
 print("Prompt:", CFG["prompt"])
 tok_t   = tokenizer(
@@ -143,12 +145,29 @@ tok_t   = tokenizer(
 
 
 # ── Visualization ─────────────────────────────────────────────────────────────
-def plot_chunk(model, img, obs, tok_t, CFG):
+def plot_chunk(model, tok_t, CFG):
+    env = gym.make(
+        "Meta-World/MT1",
+        env_name=CFG["env_name"],
+        seed=CFG["seed"],
+        render_mode="rgb_array",
+        camera_name="topdown"
+    )
+
+    gripenv = gym.make(
+        "Meta-World/MT1",
+        env_name=CFG["env_name"],
+        seed=CFG["seed"],
+        render_mode="rgb_array",
+        camera_name="gripperPOV"
+    )
+    obs, _info = env.reset(seed=CFG["seed"])
+    gripenv.reset(seed=CFG["seed"])
+    img = np.array(env.render())  # (H, W, 3) uint8
+    gripimg = np.array(gripenv.render())
+
     with torch.inference_mode():
-        # sample() returns (final_chunk, intermediate_steps)
-        # final_chunk:        (1, chunk_size, action_dim)
-        # intermediate_steps: list of (1, chunk_size, action_dim), one per Euler step
-        img_t, state_t = process_inputs(img, obs)
+        img_t, state_t = process_inputs([img, gripimg], obs)
         chunk, trajectory = model.act(img_t, tok_t, state_t, return_trajectory=True)
 
     chunk = denormalize(chunk, action_mean, action_std).squeeze(0).cpu().numpy()
@@ -200,7 +219,7 @@ def run_task(model, tok_t, CFG):
         env_name=CFG["env_name"],
         seed=CFG["seed"],
         render_mode="rgb_array",
-        camera_name="topdown"
+        camera_name="corner"
     )
 
     gripenv = gym.make(
@@ -212,7 +231,7 @@ def run_task(model, tok_t, CFG):
     )
     obs, _info = env.reset(seed=CFG["seed"])
     gripenv.reset(seed=CFG["seed"])
-    img = np.array(env.render())  # (H, W, 3) uint8
+    img = cv2.flip(np.array(env.render()), 0)  # (H, W, 3) uint8
     gripimg = np.array(gripenv.render())
 
     for i in range(1000):
@@ -231,11 +250,11 @@ def run_task(model, tok_t, CFG):
         plt.draw()
         plt.pause(0.00001)
 
-        for action in actions[:1]:
+        for action in actions[:2]:
             obs, reward, terminated, truncated, info = env.step(action)
             gripenv.step(action)
 
-            img = np.array(env.render())
+            img = cv2.flip(np.array(env.render()), 0)
             gripimg = np.array(gripenv.render())
             cv2.imshow("img", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             cv2.imshow("gripimg", cv2.cvtColor(gripimg, cv2.COLOR_RGB2BGR))
@@ -248,3 +267,4 @@ def run_task(model, tok_t, CFG):
 
 
 run_task(model, tok_t, CFG)
+# plot_chunk(model, tok_t, CFG)
