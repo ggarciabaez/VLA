@@ -64,7 +64,7 @@ if __name__ == "__main__":
     B = 3
     img = torch.randn(B, 3, 224, 224, device=device)
     txt = torch.tensor([[262, 266, 1357, 267, 262, 266, 1571, 1]]*B, device=device)
-    state = torch.randn(B, 1, 39, device=device)
+    state = torch.randn(B, 39, device=device)
     with torch.inference_mode():
         encoded = vla.encode(img, txt, state)
         print("Encoded state shape:", encoded.shape)
