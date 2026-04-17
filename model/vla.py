@@ -4,6 +4,8 @@ from model.heads import *
 from model.refusion import FusionTransformer
 from model.action import FlowMatchingHead
 from model.utils import VLAConfig
+from model.memory import EpisodeMemory, inject_memory
+
 
 class VLA(nn.Module):
     def __init__(self, cfg: VLAConfig, device: torch.device = torch.device("cuda")):
@@ -14,22 +16,16 @@ class VLA(nn.Module):
         self.txt_encoder = TextEncoder(cfg)
         if self.cfg.d_model <= 0:
             self.cfg.d_model = self.img_encoder.hidden_size
-        # assert self.cfg.d_model == self.txt_encoder.hidden_size, "An error occurred. d_model for img and txt are mismatched."
 
         self.state_encoder = StateEncoder(cfg)
-
         self.fusion_core = FusionTransformer(cfg, device)
 
+        # Added memory module
+        self.memory = EpisodeMemory(cfg)
         self.action_head = FlowMatchingHead(cfg)
 
-
-    def encode(self, img, txt, state):
-        """
-        :param img: (B, C, H, W) tensor containing a normalized image
-        :param txt: (B, T) tensor containing a tokenized string
-        :param state: (B, 1, d_state) tensor containing the robot state
-        :return: (B, P+T+1, d_model) tensor containing the encoded representation with attended text tokens for language grounding.
-        """
+    def encode_features(self, img, txt, state):
+        """Encodes modalities and fuses them, strictly without memory injection."""
         img_enc = self.img_encoder(img)
         txt_enc, mask = self.txt_encoder(txt)
         if state.dim() == 2:
@@ -37,14 +33,44 @@ class VLA(nn.Module):
         state_enc = self.state_encoder(state)
         return self.fusion_core.forward(img_enc, txt_enc, state_enc, mask)
 
-    # the arch. good f*cking update.
-    def loss(self, img, txt, state, action):
-        context = self.encode(img, txt, state)
-        return self.action_head.loss(action, context)
+    def encode(self, img, txt, state):
+        """Standard encode for single-step inference during rollouts."""
+        fusion_latents = self.encode_features(img, txt, state)
+        return inject_memory(self.memory, fusion_latents)
+        # return fusion_latents
+
+    def loss_seq(self, img_seq, txt, state_seq, action_seq):
+        """
+        Processes a sequence of length W for Stateful TBPTT.
+        img_seq: (B, W, C, H, W)
+        txt: (B, D)
+        """
+        B, W = img_seq.shape[:2]
+
+        # 1. Flatten the batch and window dimensions for parallel encoding
+        img_flat = img_seq.flatten(0, 1)  # (B*W, C, H, W)
+        state_flat = state_seq.flatten(0, 1)  # (B*W, d_state)
+        txt_flat = txt.repeat_interleave(W, dim=0)  # Match B*W
+
+        # 2. Get fusion latents for the whole sequence at once
+        fusion_flat = self.encode_features(img_flat, txt_flat, state_flat)
+        _, L, D = fusion_flat.shape
+
+        # 3. Reshape back to sequence format
+        fusion_seq = fusion_flat.view(B, W, L, D)
+
+        total_loss = 0
+        # 4. Roll through time chronologically
+        for t in range(W):
+            context = inject_memory(self.memory, fusion_seq[:, t])
+            total_loss += self.action_head.loss(action_seq[:, t], context)
+
+        # Average loss over the window length
+        return total_loss / W
 
     def act(self, img, txt, state, return_trajectory=False):
         context = self.encode(img, txt, state)
-        return self.action_head.sample(context, return_trajectory)  # Remember to de-normalise!
+        return self.action_head.sample(context, return_trajectory)
 
 def print_model_counts(model):
     sum_total = 0
@@ -68,10 +94,6 @@ if __name__ == "__main__":
     with torch.inference_mode():
         encoded = vla.encode(img, txt, state)
         print("Encoded state shape:", encoded.shape)
-        # a bit of warmup
-        for i in range(10):
-            out = vla.loss(img, txt, state, torch.randn(B, cfg.chunk_size, 4, device=device))
-        print(out)
         import time
         s = time.perf_counter()
         for i in range(100):

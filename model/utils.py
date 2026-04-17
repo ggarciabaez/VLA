@@ -21,6 +21,9 @@ class VLAConfig:
     flow_steps: int = 10
     flow_dim: int = 256
 
+    # Memory
+    seq_len: int = 16
+
     state_dim: int = 39  # your input twin
     action_dim: int = 4  # your output twin
 

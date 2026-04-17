@@ -22,7 +22,7 @@ if 1:
 
         # task
         env_name     = "basketball-v3",
-        prompt       = "",
+        prompt       = "do nothing",
         seed         = 37,
 
         # visualization
@@ -75,6 +75,7 @@ model_weights = train_state["model"]
 
 tokenizer = SiglipTokenizer.from_pretrained(cfg.siglip_model_id)
 model     = VLA(cfg, device)
+model.action_head.flow_steps = 32
 missing, unexpected = model.load_state_dict(model_weights, strict=True)
 assert not missing and not unexpected, f"State dict mismatch!\n  missing={missing}\n  unexpected={unexpected}"
 print(f"Loaded checkpoint — epoch {train_state.get('epoch', '?')}  "

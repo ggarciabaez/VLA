@@ -1,0 +1,186 @@
+"""
+EpisodeMemory: GRU-based recurrent memory for multi-step task completion.
+
+How it fits in the forward pass:
+  fusion_latents (B, L, d_model)
+      |
+      v
+  mean-pool --> (B, d_model) --> GRUCell --> h_t (B, d_model)
+                                    ^
+                                    h_{t-1} (B, d_model)
+
+  h_t is unsqueezed and prepended to fusion_latents:
+  context = cat([h_t.unsqueeze(1), fusion_latents], dim=1)  # (B, L+1, d_model)
+
+  ActionExpert cross-attends to `context` instead of `fusion_latents` directly.
+  No other changes to ActionExpert needed — it already handles variable context length.
+
+Training:
+  - Sample windows of length W consecutive steps from the same episode.
+  - Roll the GRU through the window, accumulating loss at each step.
+  - Detach hidden state across window boundaries (TBPTT).
+  - Reset hidden state when a done=True flag appears in the window.
+
+Inference:
+  - Call reset() at episode start.
+  - Call update() before each action expert forward pass.
+  - The returned context token is passed directly to the action expert.
+"""
+
+import torch
+import torch.nn as nn
+from utils import VLAConfig
+
+
+class EpisodeMemory(nn.Module):
+    """
+    Lightweight GRU memory that converts a sequence of fusion latent summaries
+    into a single recurrent context token, injected into the action expert.
+
+    Parameters
+    ----------
+    cfg : VLAConfig
+    n_layers : int
+        Number of stacked GRU layers. 1 is usually sufficient; 2 adds capacity
+        for longer-horizon tasks at minimal cost (~2M params for d_model=768).
+    """
+
+    def __init__(self, cfg: VLAConfig, n_layers: int = 1):
+        super().__init__()
+        self.d_model = cfg.d_model
+        self.n_layers = n_layers
+
+        # Project mean-pooled latents → GRU input
+        # (identity if you trust the latents directly, but a learned gate helps)
+        self.input_proj = nn.Sequential(
+            nn.Linear(cfg.d_model, cfg.d_model),
+            nn.LayerNorm(cfg.d_model),
+        )
+
+        # Stack of GRU cells for n_layers support
+        self.gru_cells = nn.ModuleList([
+            nn.GRUCell(cfg.d_model, cfg.d_model)
+            for _ in range(n_layers)
+        ])
+
+        # Output projection back to token space
+        # Initialize near-zero so memory starts with small influence and grows
+        self.out_proj = nn.Linear(cfg.d_model, cfg.d_model)
+        nn.init.normal_(self.out_proj.weight, std=0.02)
+        nn.init.zeros_(self.out_proj.bias)
+
+        # Layer norm on the output token
+        self.out_norm = nn.LayerNorm(cfg.d_model)
+
+        # Hidden state buffer: not a Parameter, managed manually
+        # Shape: (n_layers, B, d_model) — registered as buffer with None default
+        self._hidden: list[torch.Tensor] | None = None
+
+    # ------------------------------------------------------------------
+    # State management
+    # ------------------------------------------------------------------
+
+    def reset(self, batch_size: int, device: torch.device, dtype: torch.dtype = torch.float32):
+        """
+        Reset hidden state to zeros. Call at the start of each new episode.
+        Safe to call mid-batch when only some items in the batch end an episode —
+        use reset_rows() for that.
+        """
+        self._hidden = [
+            torch.zeros(batch_size, self.d_model, device=device, dtype=dtype)
+            for _ in range(self.n_layers)
+        ]
+
+    def reset_rows(self, done_mask: torch.Tensor):
+        """
+        Selectively reset hidden state for finished episodes within a batch.
+
+        Args:
+            done_mask: (B,) bool tensor, True where episode just ended.
+        """
+        if self._hidden is None:
+            return
+        for i in range(self.n_layers):
+            # Zero out rows where done=True, keep others unchanged
+            self._hidden[i] = self._hidden[i].masked_fill(done_mask.unsqueeze(-1), 0.0)
+
+    def detach(self):
+        """
+        Detach hidden state from the computation graph.
+        Call between TBPTT windows to prevent gradient flow across window boundaries.
+        """
+        if self._hidden is not None:
+            self._hidden = [h.detach() for h in self._hidden]
+
+    @property
+    def is_initialized(self) -> bool:
+        return self._hidden is not None
+
+    # ------------------------------------------------------------------
+    # Forward
+    # ------------------------------------------------------------------
+
+    def forward(self, fusion_latents: torch.Tensor) -> torch.Tensor:
+        """
+        Update memory with current fusion latents and return a memory token.
+
+        Args:
+            fusion_latents: (B, L, d_model) — output of FusionTransformer
+
+        Returns:
+            memory_token: (B, 1, d_model) — prepend this to fusion_latents
+                          before passing context to ActionExpert
+
+        Side effect:
+            Updates self._hidden in-place.
+        """
+        B, L, D = fusion_latents.shape
+        assert D == self.d_model, f"d_model mismatch: got {D}, expected {self.d_model}"
+
+        # Lazily initialize if not done yet (e.g., single-step inference)
+        if self._hidden is None:
+            self.reset(B, fusion_latents.device, fusion_latents.dtype)
+
+        # Compress latents to a single vector via mean pooling
+        x = fusion_latents.mean(dim=1)          # (B, d_model)
+        x = self.input_proj(x)                  # (B, d_model)
+
+        # Roll through GRU layers
+        new_hidden = []
+        for i, cell in enumerate(self.gru_cells):
+            h = cell(x, self._hidden[i])        # (B, d_model)
+            new_hidden.append(h)
+            x = h                               # feed into next layer
+
+        self._hidden = new_hidden
+
+        # Project top layer hidden state to memory token
+        token = self.out_norm(self.out_proj(self._hidden[-1]))  # (B, d_model)
+        return token.unsqueeze(1)                                # (B, 1, d_model)
+
+
+def inject_memory(memory_module: EpisodeMemory,
+                  fusion_latents: torch.Tensor) -> torch.Tensor:
+    """
+    Convenience wrapper: update memory and prepend token to fusion_latents.
+
+    Usage in vla.py forward():
+        from model.memory import inject_memory
+        context = inject_memory(self.memory, fusion_latents)  # (B, L+1, d_model)
+        v_pred = self.action_expert(x_t, t, context)
+
+    Returns:
+        context: (B, L+1, d_model)
+    """
+    mem_token = memory_module(fusion_latents)                    # (B, 1, d_model)
+    return torch.cat([mem_token, fusion_latents], dim=1)         # (B, L+1, d_model)
+
+if __name__ == "__main__":
+    import torch
+    from model.utils import VLAConfig
+    cfg = VLAConfig()
+    model = EpisodeMemory(cfg)
+    for i in range(4):
+        tok = inject_memory(model, torch.randn(1, 64, cfg.d_model))
+        print(tok.shape)
+    print(inject_memory(model, torch.randn(1, 64, cfg.d_model)))
