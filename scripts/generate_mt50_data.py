@@ -143,7 +143,8 @@ if __name__ == "__main__":
         seed=SEED,
         envs_list=policy_names,
         width=224,
-        height=224
+        height=224,
+        camera_name="topview",
     )
     agent = BatchAgent(agent_classes)
     saver  = BackgroundSaver()

@@ -16,72 +16,30 @@ import json
 # ── Config — edit these ───────────────────────────────────────────────────────
 VLARGE = False
 if 1:
-    if VLARGE:
-        CFG = dict(
-            # paths
-            checkpoint="../data/models/vlarge_best.pt",
-            norm_stats="../data/models/norm_stats_first.npz",
+    CFG = dict(
+        # paths
+        checkpoint   = "../data/best.pt",
 
-            # task
-            env_name="coffee-push-v3",
-            prompt="",
-            seed=37,
+        # task
+        env_name     = "basketball-v3",
+        prompt       = "",
+        seed         = 37,
 
-            # model — must match the checkpoint
-            n_trainable=8,
-            d_model=1024,
-            n_heads=8,
-            n_layers=12,
-            action_heads=8,
-            action_layers=6,
-            chunk_size=16,
-            flow_steps=10,
-            dropout=0.0,  # no dropout at eval time
-
-            # visualization
-            action_labels=["x", "y", "z", "gripper"],
-        )
-    else:
-        CFG = dict(
-            # paths
-            checkpoint   = "../data/models/vla_best.pt",
-            norm_stats   = "../data/models/norm_stats_first.npz",
-
-            # task
-            env_name     = "coffee-push-v3",
-            prompt       = "",
-            seed         = 37,
-
-            # model — must match the checkpoint
-            n_trainable  = 4,
-            d_model      = 768,
-            n_heads      = 6,
-            n_layers     = 8,
-            action_heads = 6,
-            action_layers= 4,
-            chunk_size   = 10,
-            flow_steps   = 16,
-            dropout      = 0.0,   # no dropout at eval time
-
-            # visualization
-            action_labels = ["x", "y", "z", "gripper"],
-        )
+        # visualization
+        action_labels = ["x", "y", "z", "gripper"],
+        # match training camera convention from generate_mt50_data.py
+        policy_camera = "topview",
+        # optional postprocessing for debugging action-frame mismatches
+        action_permutation = [0, 1, 2, 3],
+        action_signs = [1.0, 1.0, 1.0, 1.0],
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     if not CFG["prompt"]:
-        with open("../data/models/task_prompts.json") as f:
+        with open("../data/task_prompts.json") as f:
             CFG["prompt"] = json.load(f)[CFG["env_name"]][0]
             print(CFG["env_name"])
-    stats       = np.load(CFG["norm_stats"])
-    action_mean = torch.from_numpy(stats["action_mean"]).to(device)
-    action_std  = torch.from_numpy(stats["action_std"]).to(device)
-    # action_std[2] = 1.0
-    state_mean  = torch.from_numpy(stats["state_mean"]).to(device)
-    state_std   = torch.from_numpy(stats["state_std"]).to(device)
-
-def normalize(x, mean, std):
-    return (x - mean) / (std+1e-8)
 
 def denormalize(x, mean, std):
     return x * std + mean
@@ -96,43 +54,32 @@ def process_inputs(img, obs):
     else:
         img_t = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).to(device)  # (1, 3, H, W)
 
-    state_t = normalize(
-        torch.from_numpy(obs).to(device, torch.float32), state_mean, state_std
-    ).unsqueeze(0)
+    state_t = torch.from_numpy(obs).to(device, torch.float32).unsqueeze(0)
     return img_t, state_t
 
 def process_chunk(chunk, idx=None):
     chunk = denormalize(chunk, action_mean, action_std).squeeze(0).cpu().numpy()
+    chunk = chunk[:, CFG["action_permutation"]]
+    chunk = chunk * np.array(CFG["action_signs"], dtype=np.float32)
     if idx is None:
         return chunk
     return [chunk[idx]]
 
-print(action_mean, action_std)
 # action_mean = torch.tensor([-0.02170256,  0.841916,    0.36787212,  0.49599922], device=device)
 # action_std = torch.tensor([0.21761712, 1.417548,   2.2964888,  0.3944419 ], device=device)
 # ── Model ─────────────────────────────────────────────────────────────────────
-
-cfg = VLAConfig(
-    n_trainable  = CFG["n_trainable"],
-    d_model      = CFG["d_model"],
-    n_heads      = CFG["n_heads"],
-    n_layers     = CFG["n_layers"],
-    action_heads = CFG["action_heads"],
-    action_layers= CFG["action_layers"],
-    chunk_size   = CFG["chunk_size"],
-    flow_steps   = CFG["flow_steps"],
-    dropout      = CFG["dropout"],
-)
+train_state = torch.load(CFG["checkpoint"], weights_only=False, map_location=torch.device("cpu"))
+cfg: VLAConfig = train_state["config"]
+action_mean, action_std = torch.tensor(cfg.action_mean, device=device), torch.tensor(cfg.action_std, device=device)
+model_weights = train_state["model"]
 
 tokenizer = SiglipTokenizer.from_pretrained(cfg.siglip_model_id)
-model     = VLA(cfg, device).to(device).eval()
-
-ckpt = torch.load(CFG["checkpoint"], map_location=torch.device("cpu"))
-missing, unexpected = model.load_state_dict(ckpt["model"], strict=True)
+model     = VLA(cfg, device)
+missing, unexpected = model.load_state_dict(model_weights, strict=True)
 assert not missing and not unexpected, f"State dict mismatch!\n  missing={missing}\n  unexpected={unexpected}"
-print(f"Loaded checkpoint — epoch {ckpt.get('epoch', '?')}  "
-      f"best_loss {ckpt.get('best_loss', float('nan')):.4f}")
-model = torch.compile(model)
+print(f"Loaded checkpoint — epoch {train_state.get('epoch', '?')}  "
+      f"best_loss {train_state.get('best_loss', float('nan')):.4f}")
+model = torch.compile(model).to(device).eval()
 
 # ── Preprocess ────────────────────────────────────────────────────────────────
 print("Prompt:", CFG["prompt"])
@@ -219,7 +166,7 @@ def run_task(model, tok_t, CFG):
         env_name=CFG["env_name"],
         seed=CFG["seed"],
         render_mode="rgb_array",
-        camera_name="corner"
+        camera_name=CFG["policy_camera"],
     )
 
     gripenv = gym.make(
@@ -231,14 +178,14 @@ def run_task(model, tok_t, CFG):
     )
     obs, _info = env.reset(seed=CFG["seed"])
     gripenv.reset(seed=CFG["seed"])
-    img = cv2.flip(np.array(env.render()), 0)  # (H, W, 3) uint8
+    img = np.array(env.render())  # (H, W, 3) uint8
     gripimg = np.array(gripenv.render())
 
     for i in range(1000):
         if done:
             break
         with torch.inference_mode():
-            img_t, state_t = process_inputs([img, gripimg], obs)
+            img_t, state_t = process_inputs([gripimg], obs)
             chunk = model.act(img_t, tok_t, state_t)
             actions = process_chunk(chunk)
 
@@ -250,11 +197,11 @@ def run_task(model, tok_t, CFG):
         plt.draw()
         plt.pause(0.00001)
 
-        for action in actions[:2]:
+        for action in actions:
             obs, reward, terminated, truncated, info = env.step(action)
             gripenv.step(action)
 
-            img = cv2.flip(np.array(env.render()), 0)
+            img = np.array(env.render())
             gripimg = np.array(gripenv.render())
             cv2.imshow("img", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             cv2.imshow("gripimg", cv2.cvtColor(gripimg, cv2.COLOR_RGB2BGR))
