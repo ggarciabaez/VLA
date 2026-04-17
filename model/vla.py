@@ -37,7 +37,6 @@ class VLA(nn.Module):
         """Standard encode for single-step inference during rollouts."""
         fusion_latents = self.encode_features(img, txt, state)
         return inject_memory(self.memory, fusion_latents)
-        # return fusion_latents
 
     def loss_seq(self, img_seq, txt, state_seq, action_seq):
         """

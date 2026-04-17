@@ -21,8 +21,8 @@ if 1:
         checkpoint   = "../data/best.pt",
 
         # task
-        env_name     = "basketball-v3",
-        prompt       = "do nothing",
+        env_name     = "coffee-push-v3",
+        prompt       = "",
         seed         = 37,
 
         # visualization
@@ -75,7 +75,7 @@ model_weights = train_state["model"]
 
 tokenizer = SiglipTokenizer.from_pretrained(cfg.siglip_model_id)
 model     = VLA(cfg, device)
-model.action_head.flow_steps = 32
+# model.action_head.flow_steps = 32
 missing, unexpected = model.load_state_dict(model_weights, strict=True)
 assert not missing and not unexpected, f"State dict mismatch!\n  missing={missing}\n  unexpected={unexpected}"
 print(f"Loaded checkpoint — epoch {train_state.get('epoch', '?')}  "
@@ -115,7 +115,7 @@ def plot_chunk(model, tok_t, CFG):
     gripimg = np.array(gripenv.render())
 
     with torch.inference_mode():
-        img_t, state_t = process_inputs([img, gripimg], obs)
+        img_t, state_t = process_inputs([img], obs)
         chunk, trajectory = model.act(img_t, tok_t, state_t, return_trajectory=True)
 
     chunk = denormalize(chunk, action_mean, action_std).squeeze(0).cpu().numpy()
@@ -186,7 +186,7 @@ def run_task(model, tok_t, CFG):
         if done:
             break
         with torch.inference_mode():
-            img_t, state_t = process_inputs([gripimg], obs)
+            img_t, state_t = process_inputs([img, gripimg], obs)
             chunk = model.act(img_t, tok_t, state_t)
             actions = process_chunk(chunk)
 
@@ -214,5 +214,5 @@ def run_task(model, tok_t, CFG):
     gripenv.reset()
 
 
-run_task(model, tok_t, CFG)
-# plot_chunk(model, tok_t, CFG)
+# run_task(model, tok_t, CFG)
+plot_chunk(model, tok_t, CFG)

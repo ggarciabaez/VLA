@@ -29,7 +29,7 @@ Inference:
 
 import torch
 import torch.nn as nn
-from utils import VLAConfig
+from model.utils import VLAConfig
 
 
 class EpisodeMemory(nn.Module):
@@ -63,15 +63,19 @@ class EpisodeMemory(nn.Module):
             for _ in range(n_layers)
         ])
 
+        for cell in self.gru_cells:
+            nn.init.orthogonal_(cell.weight_hh)
+
         # Output projection back to token space
         # Initialize near-zero so memory starts with small influence and grows
         self.out_proj = nn.Linear(cfg.d_model, cfg.d_model)
-        nn.init.normal_(self.out_proj.weight, std=0.02)
+        nn.init.zeros_(self.out_proj.weight)
         nn.init.zeros_(self.out_proj.bias)
 
         # Layer norm on the output token
         self.out_norm = nn.LayerNorm(cfg.d_model)
-
+        nn.init.zeros_(self.out_norm.weight)
+        nn.init.ones_(self.out_norm.bias)
         # Hidden state buffer: not a Parameter, managed manually
         # Shape: (n_layers, B, d_model) — registered as buffer with None default
         self._hidden: list[torch.Tensor] | None = None
