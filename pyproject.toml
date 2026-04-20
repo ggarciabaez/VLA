@@ -6,6 +6,7 @@ dependencies = [
     "datasets>=4.8.4",
     "gymnasium>=1.2.3",
     "imageio[ffmpeg]>=2.37.3",
+    "ipykernel>=7.2.0",
     "matplotlib>=3.10.8",
     "metaworld>=3.0.0",
     "mujoco>=3.6.0",

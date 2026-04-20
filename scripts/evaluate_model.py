@@ -21,9 +21,9 @@ if 1:
         checkpoint   = "../data/best.pt",
 
         # task
-        env_name     = "coffee-push-v3",
+        env_name     = "soccer-v3",
         prompt       = "",
-        seed         = 37,
+        seed         = 42,
 
         # visualization
         action_labels = ["x", "y", "z", "gripper"],
@@ -70,6 +70,7 @@ def process_chunk(chunk, idx=None):
 # ── Model ─────────────────────────────────────────────────────────────────────
 train_state = torch.load(CFG["checkpoint"], weights_only=False, map_location=torch.device("cpu"))
 cfg: VLAConfig = train_state["config"]
+print(cfg)
 action_mean, action_std = torch.tensor(cfg.action_mean, device=device), torch.tensor(cfg.action_std, device=device)
 model_weights = train_state["model"]
 
@@ -99,7 +100,7 @@ def plot_chunk(model, tok_t, CFG):
         env_name=CFG["env_name"],
         seed=CFG["seed"],
         render_mode="rgb_array",
-        camera_name="topdown"
+        camera_name="corner"
     )
 
     gripenv = gym.make(
@@ -115,7 +116,7 @@ def plot_chunk(model, tok_t, CFG):
     gripimg = np.array(gripenv.render())
 
     with torch.inference_mode():
-        img_t, state_t = process_inputs([img], obs)
+        img_t, state_t = process_inputs([img, gripimg], obs)
         chunk, trajectory = model.act(img_t, tok_t, state_t, return_trajectory=True)
 
     chunk = denormalize(chunk, action_mean, action_std).squeeze(0).cpu().numpy()
@@ -214,5 +215,5 @@ def run_task(model, tok_t, CFG):
     gripenv.reset()
 
 
-# run_task(model, tok_t, CFG)
-plot_chunk(model, tok_t, CFG)
+run_task(model, tok_t, CFG)
+# plot_chunk(model, tok_t, CFG)
