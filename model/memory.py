@@ -74,8 +74,8 @@ class EpisodeMemory(nn.Module):
 
         # Layer norm on the output token
         self.out_norm = nn.LayerNorm(cfg.d_model)
-        nn.init.zeros_(self.out_norm.weight)
-        nn.init.ones_(self.out_norm.bias)
+        nn.init.ones_(self.out_norm.weight)
+        nn.init.zeros_(self.out_norm.bias)
         # Hidden state buffer: not a Parameter, managed manually
         # Shape: (n_layers, B, d_model) — registered as buffer with None default
         self._hidden: list[torch.Tensor] | None = None
@@ -84,12 +84,17 @@ class EpisodeMemory(nn.Module):
     # State management
     # ------------------------------------------------------------------
 
-    def reset(self, batch_size: int, device: torch.device, dtype: torch.dtype = torch.float32):
+    def reset(self, batch_size: int, device: torch.device, dtype: torch.dtype | None = None):
         """
         Reset hidden state to zeros. Call at the start of each new episode.
         Safe to call mid-batch when only some items in the batch end an episode —
         use reset_rows() for that.
         """
+        param_dtype = self.input_proj[0].weight.dtype
+        # Keep the recurrent state in module precision. Low-precision hidden
+        # states under autocast are prone to dtype mismatches and instability.
+        if dtype is None or dtype in (torch.float16, torch.bfloat16):
+            dtype = param_dtype
         self._hidden = [
             torch.zeros(batch_size, self.d_model, device=device, dtype=dtype)
             for _ in range(self.n_layers)
@@ -140,10 +145,17 @@ class EpisodeMemory(nn.Module):
         """
         B, L, D = fusion_latents.shape
         assert D == self.d_model, f"d_model mismatch: got {D}, expected {self.d_model}"
+        input_dtype = fusion_latents.dtype
+        work_dtype = self.input_proj[0].weight.dtype
 
         # Lazily initialize if not done yet (e.g., single-step inference)
         if self._hidden is None:
-            self.reset(B, fusion_latents.device, fusion_latents.dtype)
+            self.reset(B, fusion_latents.device, work_dtype)
+        elif any(h.dtype != work_dtype for h in self._hidden):
+            self._hidden = [h.to(dtype=work_dtype) for h in self._hidden]
+
+        if fusion_latents.dtype != work_dtype:
+            fusion_latents = fusion_latents.to(dtype=work_dtype)
 
         # Compress latents to a single vector via mean pooling
         x = fusion_latents.mean(dim=1)          # (B, d_model)
@@ -160,7 +172,7 @@ class EpisodeMemory(nn.Module):
 
         # Project top layer hidden state to memory token
         token = self.out_norm(self.out_proj(self._hidden[-1]))  # (B, d_model)
-        return token.unsqueeze(1)                                # (B, 1, d_model)
+        return token.to(dtype=input_dtype).unsqueeze(1)         # (B, 1, d_model)
 
 
 def inject_memory(memory_module: EpisodeMemory,

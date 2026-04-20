@@ -83,18 +83,22 @@ def print_model_counts(model):
     return sum_total, sum_trainable
 
 if __name__ == "__main__":
+    from contextlib import nullcontext
     device = torch.device("cuda")
     cfg = VLAConfig()
-    vla = VLA(cfg, device).to(device).eval()
+    vla = VLA(cfg, device).to(device)
     B = 3
     img = torch.randn(B, 3, 224, 224, device=device)
     txt = torch.tensor([[262, 266, 1357, 267, 262, 266, 1571, 1]]*B, device=device)
     state = torch.randn(B, 39, device=device)
-    with torch.inference_mode():
+    with nullcontext():
         encoded = vla.encode(img, txt, state)
         print("Encoded state shape:", encoded.shape)
         import time
         s = time.perf_counter()
+        for i in range(10):
+            loss = vla.loss_seq(img.unsqueeze(1), txt, state.unsqueeze(1), torch.randn(B, 1, 32, cfg.action_dim, device=device))
+            print(loss)
         for i in range(100):
             out = vla.act(img, txt, state)
         print(f"Time: {100/(time.perf_counter() - s)}")
