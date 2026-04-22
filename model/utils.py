@@ -3,21 +3,21 @@ from dataclasses import dataclass, field
 @dataclass
 class VLAConfig:
     model_name: str = "vla"  # not used anywhere, still nice for metadata
-    siglip_model_id: str = "google/siglip-base-patch16-224"
+    siglip_model_id: str = "google/siglip2-base-patch16-224"
     n_trainable: int = 4
     dropout: float = 0.1
 
     # Fusion transformer
     d_model: int = 768  # set this at 0 to use siglip default
-    n_heads: int = 6
-    n_layers: int = 8
+    n_heads: int = 8
+    n_layers: int = 4
     latent_size: int = 64
     # ffn_dim is d_model * 4
 
     # Action expert
-    action_heads: int = 4
+    action_heads: int = 8
     action_layers: int = 4
-    chunk_size: int = 32
+    chunk_size: int = 16
     flow_steps: int = 10
     flow_dim: int = 256
 

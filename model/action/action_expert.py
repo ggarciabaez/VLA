@@ -110,7 +110,7 @@ class ActionExpert(nn.Module):
         self.norm_out = nn.LayerNorm(d_model)
         self.out_proj = nn.Linear(d_model, action_dim)
 
-        nn.init.zeros_(self.out_proj.weight)
+        nn.init.normal_(self.out_proj.weight, mean=0.0, std=1e-3)
         nn.init.zeros_(self.out_proj.bias)
 
     def forward(

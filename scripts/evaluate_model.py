@@ -18,10 +18,10 @@ VLARGE = False
 if 1:
     CFG = dict(
         # paths
-        checkpoint   = "../data/best.pt",
+        checkpoint   = "../checkpoints/best.pt",
 
         # task
-        env_name     = "soccer-v3",
+        env_name     = "button-press-topdown-v3",
         prompt       = "",
         seed         = 42,
 
@@ -199,7 +199,7 @@ def run_task(model, tok_t, CFG):
         plt.draw()
         plt.pause(0.00001)
 
-        for action in actions:
+        for action in actions[:4]:
             obs, reward, terminated, truncated, info = env.step(action)
             gripenv.step(action)
 

@@ -57,14 +57,13 @@ class EpisodeMemory(nn.Module):
             nn.LayerNorm(cfg.d_model),
         )
 
-        # Stack of GRU cells for n_layers support
-        self.gru_cells = nn.ModuleList([
-            nn.GRUCell(cfg.d_model, cfg.d_model)
-            for _ in range(n_layers)
-        ])
-
-        for cell in self.gru_cells:
-            nn.init.orthogonal_(cell.weight_hh)
+        self.gru = nn.GRU(
+            input_size=cfg.d_model,
+            hidden_size=cfg.d_model,
+            num_layers=n_layers,
+            batch_first=True,
+        )
+        nn.init.orthogonal_(self.gru.weight_hh_l0)
 
         # Output projection back to token space
         # Initialize near-zero so memory starts with small influence and grows
@@ -157,22 +156,19 @@ class EpisodeMemory(nn.Module):
         if fusion_latents.dtype != work_dtype:
             fusion_latents = fusion_latents.to(dtype=work_dtype)
 
-        # Compress latents to a single vector via mean pooling
-        x = fusion_latents.mean(dim=1)          # (B, d_model)
-        x = self.input_proj(x)                  # (B, d_model)
+        x = self.input_proj(fusion_latents.mean(dim=1)).unsqueeze(1)  # (B, 1, d_model)
 
-        # Roll through GRU layers
-        new_hidden = []
-        for i, cell in enumerate(self.gru_cells):
-            h = cell(x, self._hidden[i])        # (B, d_model)
-            new_hidden.append(h)
-            x = h                               # feed into next layer
+        if self._hidden is None:
+            h0 = torch.zeros(self.n_layers, B, self.d_model, device=x.device, dtype=x.dtype)
+        else:
+            h0 = torch.stack(self._hidden, dim=0)  # (n_layers, B, d_model)
 
-        self._hidden = new_hidden
+        out, h_n = self.gru(x, h0)
 
-        # Project top layer hidden state to memory token
-        token = self.out_norm(self.out_proj(self._hidden[-1]))  # (B, d_model)
-        return token.to(dtype=input_dtype).unsqueeze(1)         # (B, 1, d_model)
+        self._hidden = list(h_n)  # unpack back into list
+
+        token = self.out_norm(self.out_proj(h_n[-1]))
+        return token.unsqueeze(1).to(dtype=input_dtype)
 
 
 def inject_memory(memory_module: EpisodeMemory,

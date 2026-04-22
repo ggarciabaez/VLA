@@ -42,7 +42,7 @@ class MultiHeadAttention(nn.Module):
             q, k, v,
             attn_mask=attn_mask,
             dropout_p=self.dropout if self.training else 0.0,
-            enable_gqa=self.gqa
+            enable_gqa=self.gqa  # TODO: model won't export to onnx with gqa
         )
 
         # (B, n_heads, T, d_head) -> (B, T, d_model)

@@ -86,6 +86,9 @@ class FlowMatchingHead(nn.Module):
             return x_t, outputs  # (B, C, action_dim)
         return x_t
 
+    def forward(self, *args, **kwargs):
+        return self.sample(*args, **kwargs)
+
 if __name__ == "__main__":
     fm = FlowMatchingHead(VLAConfig())
     print(fm.sample(torch.randn(1, 64, 768)))

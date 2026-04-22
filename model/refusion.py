@@ -92,6 +92,7 @@ if __name__ == "__main__":
     from model.utils import VLAConfig
     cfg = VLAConfig()
     model = FusionTransformer(cfg, torch.device("cuda")).to(device=torch.device("cuda"))
+    model.eval()
     txt_tensor = torch.randn(1, 10, cfg.d_model, device=torch.device("cuda"))
     img_tensor = torch.randn(1, 24, cfg.d_model, device=torch.device("cuda"))
     state_tensor = torch.randn(1, 39, cfg.d_model, device=torch.device("cuda"))

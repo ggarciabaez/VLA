@@ -25,11 +25,6 @@ class VisionEncoder(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dtype == torch.uint8:
             x = x.float() / 255.0
-        else:
-            x = x.float()
-            # Some callers pass float images still in 0..255 range.
-            if x.max() > 1.5:
-                x = x / 255.0
         x = (x - self.mean) / self.std  # normalize
         if x.ndim == 4:
             return self.singleforward(x)

@@ -71,6 +71,9 @@ class VLA(nn.Module):
         context = self.encode(img, txt, state)
         return self.action_head.sample(context, return_trajectory)
 
+    def forward(self, img, txt, state, return_trajectory=False):
+        return self.act(img, txt, state, return_trajectory)
+
 def print_model_counts(model):
     sum_total = 0
     sum_trainable = 0
@@ -83,29 +86,25 @@ def print_model_counts(model):
     return sum_total, sum_trainable
 
 if __name__ == "__main__":
-    from contextlib import nullcontext
     device = torch.device("cuda")
     cfg = VLAConfig()
     vla = VLA(cfg, device).to(device)
+    vla = torch.compile(vla)
     B = 3
-    img = torch.randn(B, 3, 224, 224, device=device)
+    img = (torch.rand(B, 3, 224, 224)*255).to(torch.uint8).to(device=device, non_blocking=True)
     txt = torch.tensor([[262, 266, 1357, 267, 262, 266, 1571, 1]]*B, device=device)
     state = torch.randn(B, 39, device=device)
-    with nullcontext():
-        encoded = vla.encode(img, txt, state)
+    total, trainable = print_model_counts(vla)
+    print(f"Total params:     {total:,}")
+    print(f"Trainable params: {trainable:,}")
+    print(f"Frozen params:    {total - trainable:,}")
+    print(f"Total flops:      {total * 2 * 1e-9:.2f} GFLOPs")
+    with torch.inference_mode():
+        encoded = vla.encode_features(img, txt, state)
         print("Encoded state shape:", encoded.shape)
         import time
         s = time.perf_counter()
-        for i in range(10):
-            loss = vla.loss_seq(img.unsqueeze(1), txt, state.unsqueeze(1), torch.randn(B, 1, 32, cfg.action_dim, device=device))
-            print(loss)
         for i in range(100):
             out = vla.act(img, txt, state)
         print(f"Time: {100/(time.perf_counter() - s)}")
-
-        total, trainable = print_model_counts(vla)
-        print(f"Total params:     {total:,}")
-        print(f"Trainable params: {trainable:,}")
-        print(f"Frozen params:    {total - trainable:,}")
-        print(f"Total flops:      {total * 2 * 1e-9:.2f} GFLOPs")
         print(out.shape)
