@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
 @dataclass
-class VLAConfig:
+class oldVLAConfig:
     model_name: str = "vla"  # not used anywhere, still nice for metadata
     siglip_model_id: str = "google/siglip2-base-patch16-224"
     n_trainable: int = 4
@@ -11,7 +11,7 @@ class VLAConfig:
     d_model: int = 768  # set this at 0 to use siglip default
     n_heads: int = 8
     n_layers: int = 4
-    latent_size: int = 64
+    lq_size: int = 64
     # ffn_dim is d_model * 4
 
     # Action expert
@@ -19,13 +19,14 @@ class VLAConfig:
     action_layers: int = 4
     chunk_size: int = 16
     flow_steps: int = 10
-    flow_dim: int = 256
+
 
     # Memory
-    seq_len: int = 16
+    mem_len: int = 10
 
     state_dim: int = 39  # your input twin
     action_dim: int = 4  # your output twin
+    flow_dim: int = 256
 
     # head configs
     img_size: int = 224
@@ -34,14 +35,30 @@ class VLAConfig:
     action_mean: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
     action_std: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
 
-    type_ids: dict = field(default_factory=lambda: {
-        "vision": 0,
-        "text": 1,
-        "state": 2,
-        # other types of data get added here, things like oh idk, depth?? wink wink
-    })
+@dataclass
+class VLAConfig:
+    siglip_model_id: str = "google/siglip2-base-patch16-224"
+    n_trainable: int = 4
+    dropout: float = 0.1
 
+    d_model: int = 768
+    state_dim: int = 39
+    action_dim: int = 4
 
+    chunk_size: int = 16
+    flow_steps: int = 10
+    film_layers: int = 4
+
+    n_heads: int = 8
+    n_layers: int = 4
+    lq_size: int = 64
+    mem_len: int = 10
+
+    img_size: int = 224
+
+    # normalization stats, make sure to catch these before training
+    action_mean: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
+    action_std: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
 
 def freeze_except_last_n_layers(model, n_unfrozen_layers, model_type="vision"):
     """

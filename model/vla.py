@@ -1,78 +1,96 @@
-from torch import nn
-import torch
-from model.heads import *
-from model.refusion import FusionTransformer
-from model.action import FlowMatchingHead
+# TODO: add documentation across the model
 from model.utils import VLAConfig
-from model.memory import EpisodeMemory, inject_memory
-
+from model.heads import TextEncoder, VisionEncoder
+from model.fusion import QFormer
+from action_expert import ActionExpert
+import torch
+from torch import nn
 
 class VLA(nn.Module):
-    def __init__(self, cfg: VLAConfig, device: torch.device = torch.device("cuda")):
-        super(VLA, self).__init__()
+    def __init__(self, cfg: VLAConfig):
+        super().__init__()
         self.cfg = cfg
-        self.device = device
-        self.img_encoder = VisionEncoder(cfg)
-        self.txt_encoder = TextEncoder(cfg)
-        if self.cfg.d_model <= 0:
-            self.cfg.d_model = self.img_encoder.hidden_size
+        self.vision_encoder = VisionEncoder(cfg)
+        self.text_encoder = TextEncoder(cfg)
+        self.qformer = QFormer(cfg)
+        self.action_expert = ActionExpert(cfg)
 
-        self.state_encoder = StateEncoder(cfg)
-        self.fusion_core = FusionTransformer(cfg, device)
+        self._used_mem = 0
+        self._mem_buf = None
+        self.mem_mask = None
+        self._txt_cache = None
 
-        # Added memory module
-        self.memory = EpisodeMemory(cfg)
-        self.action_head = FlowMatchingHead(cfg)
+    @torch.no_grad()
+    def insert_memory(self, mem: torch.Tensor):
+        B = mem.shape[0]
+        if self._mem_buf is None:
+            self._mem_buf = torch.zeros(B, self.cfg.mem_len, self.cfg.d_model, device=mem.device)
+            self.mem_mask = torch.zeros(B, self.cfg.mem_len, dtype=torch.bool, device=mem.device)
+        # Shift right, insert at front (index 0 = most recent)
+        self._mem_buf = torch.roll(self._mem_buf, 1, dims=1)
+        self._mem_buf[:, 0, :] = mem.squeeze(1).detach()
+        self._used_mem = min(self._used_mem + 1, self.cfg.mem_len)
+        self.mem_mask[:, self._used_mem-1] = True  # mark empty slots
 
-    def encode_features(self, img, txt, state):
-        """Encodes modalities and fuses them, strictly without memory injection."""
-        img_enc = self.img_encoder(img)
-        txt_enc, mask = self.txt_encoder(txt)
-        if state.dim() == 2:
-            state = state.unsqueeze(1)
-        state_enc = self.state_encoder(state)
-        return self.fusion_core.forward(img_enc, txt_enc, state_enc, mask)
 
-    def encode(self, img, txt, state):
-        """Standard encode for single-step inference during rollouts."""
-        fusion_latents = self.encode_features(img, txt, state)
-        return inject_memory(self.memory, fusion_latents)
+    @torch.no_grad()
+    def get_memory(self, B=None, device=None):
+        if self._mem_buf is None:
+            self._mem_buf = torch.zeros(B, self.cfg.mem_len, self.cfg.d_model, device=device)
+            self.mem_mask = torch.zeros(B, self.cfg.mem_len, dtype=torch.bool, device=device)
+        return self._mem_buf, self.mem_mask
 
-    def loss_seq(self, img_seq, txt, state_seq, action_seq):
+    def reset_memory(self):
+        self._mem_buf = None
+        self.mem_mask = None
+        self._used_mem = 0
+
+    def reset(self):
+        self._txt_cache = None
+        self.reset_memory()
+
+    def encode(self, img: torch.Tensor, txt: torch.Tensor, cache_txt: bool = True):
         """
-        Processes a sequence of length W for Stateful TBPTT.
-        img_seq: (B, W, C, H, W)
-        txt: (B, D)
+        :param img: Image tensor of shape (B, 3, H, W) or (B, N, 3, H, W)
+        :param txt: Text tensor of shape (B, 64)
+        :param cache_txt: Whether to cache the text embeddings for faster encoding. Usually for inference.
+        :return: (B, lq_size, d_model) reasoning tokens (learned queries)
         """
-        B, W = img_seq.shape[:2]
+        img_enc = self.vision_encoder(img)
+        if self._txt_cache is None or torch.any(self._txt_cache[2]!=txt) or not cache_txt:
+            txt_enc, txt_mask = self.text_encoder(txt)
+            self._txt_cache = (txt_enc, txt_mask, txt)
+        else:
+            txt_enc, txt_mask = self._txt_cache[0], self._txt_cache[1]
+        mem, mem_mask = self.get_memory(img_enc.shape[0], img_enc.device)
+        context = self.qformer(img_enc, self._txt_cache[0], mem, self._txt_cache[1], mem_mask)
+        return context
 
-        # 1. Flatten the batch and window dimensions for parallel encoding
-        img_flat = img_seq.flatten(0, 1)  # (B*W, C, H, W)
-        state_flat = state_seq.flatten(0, 1)  # (B*W, d_state)
-        txt_flat = txt.repeat_interleave(W, dim=0)  # Match B*W
+    def loss(self, img, txt, state, action, update_memory=True):
+        reasoning = self.encode(img, txt)
+        l, mem = self.action_expert.loss(action, state, reasoning, True)
+        if update_memory:
+            self.insert_memory(mem)
+        return l
 
-        # 2. Get fusion latents for the whole sequence at once
-        fusion_flat = self.encode_features(img_flat, txt_flat, state_flat)
-        _, L, D = fusion_flat.shape
+    @torch.no_grad()
+    def act(self, img, txt, state, update_memory=True, return_trajectory=False):
+        reasoning = self.encode(img, txt)
+        actions, mem = self.action_expert.sample(reasoning, state, return_trajectory)
+        if update_memory:
+            self.insert_memory(mem)
+        return actions
 
-        # 3. Reshape back to sequence format
-        fusion_seq = fusion_flat.view(B, W, L, D)
+    def forward(self, img, txt, state, action, update_memory=True):
+        return self.act(img, txt, state, update_memory)
 
-        total_loss = 0
-        # 4. Roll through time chronologically
-        for t in range(W):
-            context = inject_memory(self.memory, fusion_seq[:, t])
-            total_loss += self.action_head.loss(action_seq[:, t], context)
+    @torch.no_grad()
+    def generate_dummy_inputs(self, B=1, device=torch.device("cpu")):
+        img = (torch.rand(B, 3, 224, 224, device=device) * 255).to(torch.uint8)
+        txt = self.text_encoder.tokenize(["A picture of a dog"] * B).to(device)
+        state = torch.randn(B, 39, device=device)
+        return img, txt, state
 
-        # Average loss over the window length
-        return total_loss / W
-
-    def act(self, img, txt, state, return_trajectory=False):
-        context = self.encode(img, txt, state)
-        return self.action_head.sample(context, return_trajectory)
-
-    def forward(self, img, txt, state, return_trajectory=False):
-        return self.act(img, txt, state, return_trajectory)
 
 def print_model_counts(model):
     sum_total = 0
@@ -88,23 +106,29 @@ def print_model_counts(model):
 if __name__ == "__main__":
     device = torch.device("cuda")
     cfg = VLAConfig()
-    vla = VLA(cfg, device).to(device)
-    vla = torch.compile(vla)
+    vla = VLA(cfg).to(device)
+    # vla = torch.compile(vla)
     B = 3
-    img = (torch.rand(B, 3, 224, 224)*255).to(torch.uint8).to(device=device, non_blocking=True)
-    txt = torch.tensor([[262, 266, 1357, 267, 262, 266, 1571, 1]]*B, device=device)
-    state = torch.randn(B, 39, device=device)
+    img, txt, state = vla.generate_dummy_inputs(B, device)
     total, trainable = print_model_counts(vla)
     print(f"Total params:     {total:,}")
     print(f"Trainable params: {trainable:,}")
     print(f"Frozen params:    {total - trainable:,}")
     print(f"Total flops:      {total * 2 * 1e-9:.2f} GFLOPs")
     with torch.inference_mode():
-        encoded = vla.encode_features(img, txt, state)
+        # No perf boost: 8.5
+        # cache: 16.x
+        # autocast: 21.0
+        # autocast + compile: 21.3
+        # autocast + cache: 26.4
+        # autocast + cache + compile: 26.2
+        encoded = vla.encode(img, txt)
+        vla.reset()
         print("Encoded state shape:", encoded.shape)
         import time
         s = time.perf_counter()
-        for i in range(100):
-            out = vla.act(img, txt, state)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            for i in range(100):
+                out = vla.act(img, txt, state)
         print(f"Time: {100/(time.perf_counter() - s)}")
         print(out.shape)

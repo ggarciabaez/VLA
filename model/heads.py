@@ -1,16 +1,15 @@
-from transformers import SiglipVisionModel, logging
-logging.set_verbosity_error()
+from transformers import SiglipVisionModel, SiglipTextModel, Siglip2Tokenizer, AutoTokenizer, logging
 from torch import nn
 import torch
 from torch.functional import F
-from model.utils import VLAConfig, freeze_except_last_n_layers
+from model.utils import VLAConfig, freeze_except_last_n_layers  # covered here
+logging.set_verbosity_error()
 
 class VisionEncoder(nn.Module):
     def __init__(self, cfg: VLAConfig):
         super(VisionEncoder, self).__init__()
         self.cfg = cfg
         self.backbone = SiglipVisionModel.from_pretrained(cfg.siglip_model_id)
-
         self.hidden_size = int(self.backbone.config.hidden_size)
 
         # normalize
@@ -52,9 +51,37 @@ class VisionEncoder(nn.Module):
 
         return out
 
-if __name__ == "__main__":
+class TextEncoder(nn.Module):
+    def __init__(self, cfg: VLAConfig):
+        super(TextEncoder, self).__init__()
+        self.cfg = cfg
+        self.backbone = SiglipTextModel.from_pretrained(cfg.siglip_model_id)
+        self._tokenizer = AutoTokenizer.from_pretrained(cfg.siglip_model_id)
+        self.special_ids = torch.tensor(self._tokenizer.all_special_ids)
+        self.tokenize = lambda x: self._tokenizer.encode(x, padding="max_length", max_length=64, truncation=True,
+                                                         return_tensors="pt")
+
+        self.hidden_size = int(self.backbone.config.hidden_size)
+        # TODO: could be a good idea to just always have a projection for a new embedding space
+        if cfg.d_model <= 0:
+            cfg.d_model = self.hidden_size
+        self.proj = nn.Linear(self.hidden_size, self.cfg.d_model)
+        self.backbone = freeze_except_last_n_layers(self.backbone, cfg.n_trainable, model_type="text")
+
+
+    def forward(self, tokens):
+        """
+        Encodes text tokens into (B, T, d_model) tensors. T is variable depending on string length.
+        :param tokens: Tokenized (B, Tk) strings as a tensor. Remember to move to the proper device!
+        :return: Text embeddings of dimension d_model, as well as the padding mask. The padding mask is False for padding tokens.
+        """
+        # TODO: for Siglip2, there's EOS token and pad token. Right now we leave the EOS, but we might need to remove it later.
+        return self.proj(self.backbone(tokens).last_hidden_state), ~torch.isin(tokens, self.special_ids.to(tokens.device))
+
+if __name__ == '__main__':
     # test the model
     import cv2
+
     cam = cv2.VideoCapture(0)
     ret, frame = cam.read()
     ret, frame2 = cam.read()
@@ -69,3 +96,10 @@ if __name__ == "__main__":
         frame
     )
     print(out.shape)
+    txt = TextEncoder(cfg)
+    strings = ["a picture of a dog", "a picture of a cat", "a picture of a person in a hoodie",
+               "a very long instruction word consisting of various connectors and some redundant explanations", "short"]
+    tokens = txt.tokenize(strings)
+    print(tokens.size())
+    enc, mask = txt.forward(tokens)
+    print(enc.size(), mask)
