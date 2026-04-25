@@ -76,7 +76,8 @@ class TextEncoder(nn.Module):
         :return: Text embeddings of dimension d_model, as well as the padding mask. The padding mask is False for padding tokens.
         """
         # TODO: for Siglip2, there's EOS token and pad token. Right now we leave the EOS, but we might need to remove it later.
-        return self.proj(self.backbone(tokens).last_hidden_state), ~torch.isin(tokens, self.special_ids.to(tokens.device))
+        # ~torch.isin(tokens, self.special_ids.to(tokens.device))
+        return self.proj(self.backbone(tokens).last_hidden_state), torch.ones_like(tokens, dtype=torch.bool, device=tokens.device)
 
 if __name__ == '__main__':
     # test the model

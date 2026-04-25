@@ -1,3 +1,6 @@
+# TODO: We can save on storage size by directly storing by action chunks.
+# We can take 1 image, 1 state, and 16 (for example) actions.
+# That way we save a lot of space, and learn better what chunks look like
 from train_utils import get_prompt_table, VLAConfig
 import os
 import numpy as np

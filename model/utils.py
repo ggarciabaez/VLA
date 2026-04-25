@@ -8,7 +8,7 @@ class oldVLAConfig:
     dropout: float = 0.1
 
     # Fusion transformer
-    d_model: int = 768  # set this at 0 to use siglip default
+    d_model: int = 1024  # set this at 0 to use siglip default
     n_heads: int = 8
     n_layers: int = 4
     lq_size: int = 64
@@ -16,7 +16,7 @@ class oldVLAConfig:
 
     # Action expert
     action_heads: int = 8
-    action_layers: int = 4
+    action_layers: int = 8
     chunk_size: int = 16
     flow_steps: int = 10
 
@@ -41,16 +41,16 @@ class VLAConfig:
     n_trainable: int = 4
     dropout: float = 0.1
 
-    d_model: int = 768
+    d_model: int = 1024
     state_dim: int = 39
     action_dim: int = 4
 
-    chunk_size: int = 16
+    chunk_size: int = 32
     flow_steps: int = 10
     film_layers: int = 4
 
     n_heads: int = 8
-    n_layers: int = 4
+    n_layers: int = 8
     lq_size: int = 64
     mem_len: int = 10
 

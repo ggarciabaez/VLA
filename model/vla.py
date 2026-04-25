@@ -2,7 +2,7 @@
 from model.utils import VLAConfig
 from model.heads import TextEncoder, VisionEncoder
 from model.fusion import QFormer
-from action_expert import ActionExpert
+from model.action_expert import ActionExpert
 import torch
 from torch import nn
 
@@ -49,7 +49,7 @@ class VLA(nn.Module):
         self._txt_cache = None
         self.reset_memory()
 
-    def encode(self, img: torch.Tensor, txt: torch.Tensor, cache_txt: bool = True):
+    def encode(self, img: torch.Tensor, txt: torch.Tensor, cache_txt: bool = False):
         """
         :param img: Image tensor of shape (B, 3, H, W) or (B, N, 3, H, W)
         :param txt: Text tensor of shape (B, 64)
@@ -57,14 +57,32 @@ class VLA(nn.Module):
         :return: (B, lq_size, d_model) reasoning tokens (learned queries)
         """
         img_enc = self.vision_encoder(img)
-        if self._txt_cache is None or torch.any(self._txt_cache[2]!=txt) or not cache_txt:
+        # Reusing cached text features during training would retain autograd state
+        # across timesteps, which breaks repeated backward passes in the trainer loop.
+        use_txt_cache = cache_txt and not self.training
+        if self._txt_cache is None or torch.any(self._txt_cache[2] != txt) or not use_txt_cache:
             txt_enc, txt_mask = self.text_encoder(txt)
-            self._txt_cache = (txt_enc, txt_mask, txt)
+            if use_txt_cache:
+                self._txt_cache = (txt_enc, txt_mask, txt)
         else:
             txt_enc, txt_mask = self._txt_cache[0], self._txt_cache[1]
+        return self._fuse(img_enc, txt_enc, txt_mask)
+
+    def _get_encodings(self, img, txt):
+        img_enc = self.vision_encoder(img)
+        txt_enc, txt_mask = self.text_encoder(txt)
+        return img_enc, txt_enc, txt_mask
+
+    def _fuse(self, img_enc, txt_enc, txt_mask, return_weights=False):
+        """
+        Takes encoded features and fuses them with memory into the reasoning tokens.
+        :param img_enc: Encoded image features from SigLIP, translated into d_model.
+        :param txt_enc: Encoded text features from SigLIP, translated into d_model.
+        :param txt_mask: Attention mask to ignore padding tokens in the text features.
+        :return: Reasoning tokens (learned queries) of shape (B, lq_size, d_model)
+        """
         mem, mem_mask = self.get_memory(img_enc.shape[0], img_enc.device)
-        context = self.qformer(img_enc, self._txt_cache[0], mem, self._txt_cache[1], mem_mask)
-        return context
+        return self.qformer(img_enc, txt_enc, mem, txt_mask, mem_mask, return_weights=return_weights)
 
     def loss(self, img, txt, state, action, update_memory=True):
         reasoning = self.encode(img, txt)
@@ -76,12 +94,15 @@ class VLA(nn.Module):
     @torch.no_grad()
     def act(self, img, txt, state, update_memory=True, return_trajectory=False):
         reasoning = self.encode(img, txt)
-        actions, mem = self.action_expert.sample(reasoning, state, return_trajectory)
+        out = self.action_expert.sample(reasoning, state, return_trajectory)
+        actions, mem, traj = out[0], out[1], out[2] if return_trajectory else None
         if update_memory:
             self.insert_memory(mem)
+        if return_trajectory:
+            return actions, traj
         return actions
 
-    def forward(self, img, txt, state, action, update_memory=True):
+    def forward(self, img, txt, state, update_memory=True):
         return self.act(img, txt, state, update_memory)
 
     @torch.no_grad()
@@ -104,12 +125,14 @@ def print_model_counts(model):
     return sum_total, sum_trainable
 
 if __name__ == "__main__":
+    import torch_tensorrt
     device = torch.device("cuda")
     cfg = VLAConfig()
     vla = VLA(cfg).to(device)
-    # vla = torch.compile(vla)
     B = 3
     img, txt, state = vla.generate_dummy_inputs(B, device)
+    # ['aot_torch_tensorrt_aten', 'cudagraphs', 'inductor', 'openxla', 'tensorrt', 'torch_tensorrt', 'tvm']
+    vla = torch.compile(vla, mode="max-autotune", fullgraph=True)
     total, trainable = print_model_counts(vla)
     print(f"Total params:     {total:,}")
     print(f"Trainable params: {trainable:,}")
@@ -125,6 +148,7 @@ if __name__ == "__main__":
         encoded = vla.encode(img, txt)
         vla.reset()
         print("Encoded state shape:", encoded.shape)
+        vla.act(img, txt, state)
         import time
         s = time.perf_counter()
         with torch.autocast("cuda", dtype=torch.bfloat16):

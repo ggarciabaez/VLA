@@ -38,6 +38,25 @@ class LatentFusionLayer(nn.Module):
         x = x + self.ffn(self.norm3(x))
         return x
 
+    def oldforward(self, lq: torch.Tensor, context: torch.Tensor,
+                context_pad_mask: torch.Tensor | None = None,
+                return_weights: bool = False):
+        x = self.norm1(lq)
+        x = x + self.self_attn(x)
+        x = self.norm2(x)
+
+        if return_weights:
+            cross_out, attn_weights = self.cross_attn(
+                x, context, context, context_pad_mask, return_weights=True
+            )
+            x = x + cross_out
+            x = x + self.ffn(self.norm3(x))
+            return x, attn_weights
+        else:
+            x = x + self.cross_attn(x, context, context, context_pad_mask)
+            x = x + self.ffn(self.norm3(x))
+            return x
+
 
 class QFormer(nn.Module):
     def __init__(self, cfg: VLAConfig):
@@ -91,6 +110,38 @@ class QFormer(nn.Module):
             lq = layer(lq, context, mask)
         return self.out_norm(lq)
 
+    def oldforward(self, img: torch.Tensor, txt: torch.Tensor, mem: torch.Tensor,
+                txt_mask: torch.Tensor | None = None, mem_mask: torch.Tensor | None = None,
+                return_weights: bool = False):
+
+        context = self._embed_context(img, txt, mem)
+        if txt_mask is None and mem_mask is None:
+            mask = None  # no masks on any, for some reason.
+        else:
+            if txt_mask is None:
+                txt_mask = torch.ones(txt.shape[0], txt.shape[1], dtype=torch.bool, device=txt.device)
+            if mem_mask is None:
+                mem_mask = torch.ones(mem.shape[0], mem.shape[1], dtype=torch.bool, device=mem.device)
+            img_mask = torch.ones(img.shape[0], img.shape[1], dtype=torch.bool, device=img.device)
+            mask = torch.cat([img_mask, txt_mask, mem_mask], dim=1)[:, None, None, :]  # noqa
+
+        lq = self.lq.expand(context.shape[0], -1, -1)
+
+        all_layer_weights = []
+
+        for layer in self.layers:
+            if return_weights:
+                lq, weights = layer(lq, context, mask, return_weights=True)
+                all_layer_weights.append(weights)
+            else:
+                lq = layer(lq, context, mask)
+
+        out = self.out_norm(lq)
+
+        if return_weights:
+            # Stack weights: (n_layers, B, n_heads, lq_size, N_ctx)
+            return out, torch.stack(all_layer_weights)
+        return out
 
 if __name__ == "__main__":
     B = 4
@@ -112,13 +163,85 @@ if __name__ == "__main__":
     # Episode t=3: first 3 slots filled, rest empty
     mem_pad_mask[:, 3:] = True
 
-    reasoning = model(image, text, mem, text_pad_mask, mem_pad_mask)
+    reasoning, weights = model(image, text, mem, text_pad_mask, mem_pad_mask, return_weights=True)
 
     print(f"image          : {image.shape}")
     print(f"text           : {text.shape}")
     print(f"mem            : {mem.shape}  (slots 3-9 masked)")
     print(f"context        : (B, {196 + 64 + mem_len}, {d_model})")
     print(f"reasoning      : {reasoning.shape}")
-
+    print(f"weights        : {weights.shape}")
     assert reasoning.shape == (B, n_queries, d_model)
     print("Shape check passed.")
+
+    import math, numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+
+    def plot_qformer_attention(
+            attn_weights: torch.Tensor,
+            batch_idx: int = 0,
+            layer_idx: int = -1,
+            query_idx: int = 0,
+            img_seq_len: int = 196,
+            txt_seq_len: int = 64,
+            mem_seq_len: int = 10
+    ):
+        """
+        Slices and plots the cross-attention heatmap for a specific learned query.
+
+        :param attn_weights: Tensor of shape (n_layers, B, n_heads, lq_size, N_ctx)
+        :param batch_idx: Which batch item to visualize
+        :param layer_idx: Which QFormer layer to visualize (default: -1, the last layer)
+        :param query_idx: Which of the 64 learned queries to visualize
+        """
+        # 1. Select the specific layer, batch, and query
+        # Shape becomes: (n_heads, N_ctx)
+        query_weights = attn_weights[layer_idx, batch_idx, :, query_idx, :]
+
+        # 2. Average across all attention heads to get the consensus view
+        # Shape becomes: (N_ctx,)
+        avg_weights = query_weights.mean(dim=0).detach().cpu().numpy()
+
+        # 3. Slice the context into its respective modalities
+        idx_img_end = img_seq_len
+        idx_txt_end = idx_img_end + txt_seq_len
+
+        img_attn = avg_weights[:idx_img_end]
+        txt_attn = avg_weights[idx_img_end:idx_txt_end]
+        mem_attn = avg_weights[idx_txt_end:]
+
+        # 4. Reshape Image Attention to 2D grid
+        # Assuming square aspect ratio (e.g., 196 patches -> 14x14)
+        grid_size = int(math.sqrt(img_seq_len))
+        assert grid_size * grid_size == img_seq_len, "Image sequence length must be a perfect square for 2D reshaping."
+        img_attn_2d = img_attn.reshape(grid_size, grid_size)
+
+        # --- Plotting ---
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5), gridspec_kw={'width_ratios': [1.5, 3, 1]})
+        fig.suptitle(f'Cross-Attention Weights (Layer {layer_idx}, Query {query_idx})', fontsize=16)
+
+        # Plot Image Attention
+        sns.heatmap(img_attn_2d, ax=axes[0], cmap='viridis', cbar=True, square=True)
+        axes[0].set_title('Image Patches Spatial Attention')
+        axes[0].axis('off')
+
+        # Plot Text Attention
+        # Reshaping to 1D heatmap (1 x txt_seq_len) for better visibility
+        sns.heatmap(txt_attn[np.newaxis, :], ax=axes[1], cmap='viridis', cbar=True, yticklabels=False)
+        axes[1].set_title('Text Token Attention')
+        axes[1].set_xlabel('Token Index')
+
+        # Plot Memory Attention
+        sns.heatmap(mem_attn[np.newaxis, :], ax=axes[2], cmap='viridis', cbar=True, yticklabels=False)
+        axes[2].set_title('Memory Slot Attention')
+        axes[2].set_xlabel('Memory Recency (Older -> Newer)')
+
+        plt.tight_layout()
+        plt.show()
+
+    plot_qformer_attention(weights, batch_idx=0, layer_idx=0, query_idx=0)
+    # --- Example Usage ---
+    # reasoning, all_weights = model(image, text, mem, text_pad_mask, mem_pad_mask, return_weights=True)
+    # plot_qformer_attention(all_weights, query_idx=0, img_seq_len=196, txt_seq_len=64, mem_seq_len=10)
