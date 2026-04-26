@@ -73,7 +73,7 @@ class VLA(nn.Module):
         txt_enc, txt_mask = self.text_encoder(txt)
         return img_enc, txt_enc, txt_mask
 
-    def _fuse(self, img_enc, txt_enc, txt_mask, return_weights=False):
+    def _fuse(self, img_enc, txt_enc, txt_mask):
         """
         Takes encoded features and fuses them with memory into the reasoning tokens.
         :param img_enc: Encoded image features from SigLIP, translated into d_model.
@@ -82,7 +82,7 @@ class VLA(nn.Module):
         :return: Reasoning tokens (learned queries) of shape (B, lq_size, d_model)
         """
         mem, mem_mask = self.get_memory(img_enc.shape[0], img_enc.device)
-        return self.qformer(img_enc, txt_enc, mem, txt_mask, mem_mask, return_weights=return_weights)
+        return self.qformer(img_enc, txt_enc, mem, txt_mask, mem_mask)
 
     def loss(self, img, txt, state, action, update_memory=True):
         reasoning = self.encode(img, txt)

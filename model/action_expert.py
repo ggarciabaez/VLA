@@ -198,8 +198,8 @@ class ActionExpert(nn.Module):
         self.pos_emb = nn.Embedding(cfg.chunk_size, cfg.d_model)
 
         self.layers = nn.ModuleList([
-            ActionExpertLayer(cfg.d_model, cfg.n_heads // 2, 4 * cfg.d_model, cfg.dropout)
-            for _ in range(cfg.n_layers // 2)
+            ActionExpertLayer(cfg.d_model, cfg.n_heads, 4 * cfg.d_model, cfg.dropout)
+            for _ in range(cfg.n_layers)
         ])
 
         self.state_enc = nn.Sequential(

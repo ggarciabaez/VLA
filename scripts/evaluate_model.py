@@ -16,17 +16,17 @@ import json
 if 1:
     CFG = dict(
         # paths
-        checkpoint   = "../checkpoints/masked/no_mask_old_loss.pt",
+        checkpoint   = "../checkpoints/best.pt",
 
         # task
-        env_name     = "basketball-v3",
+        env_name     = "button-press-topdown-v3",
         prompt       = "",
         seed         = 37,
 
         # visualization
         action_labels = ["x", "y", "z", "gripper"],
         # match training camera convention from generate_mt50_data.py
-        policy_camera = "topview",
+        policy_camera = "default",
         # optional postprocessing for debugging action-frame mismatches
         action_permutation = [0, 1, 2, 3],
         action_signs = [1.0, 1.0, 1.0, 1.0],
@@ -73,7 +73,7 @@ action_mean, action_std = torch.tensor(cfg.action_mean, device=device), torch.te
 model_weights = train_state["model"]
 
 model     = VLA(cfg)
-# model.action_expert.cfg.flow_steps = 1
+# model.action_expert.cfg.flow_steps = 10
 missing, unexpected = model.load_state_dict(model_weights, strict=True)
 assert not missing and not unexpected, f"State dict mismatch!\n  missing={missing}\n  unexpected={unexpected}"
 print(f"Loaded checkpoint — epoch {train_state.get('epoch', '?')}  "
@@ -110,8 +110,8 @@ def plot_chunk(model, tok_t, CFG):
     gripimg = np.array(gripenv.render())
 
     with torch.inference_mode():
-        img_t, state_t = process_inputs([img, gripimg], obs)
-        chunk, trajectory = model.act(img_t, tok_t, state_t, return_trajectory=True)
+        img_t, state_t = process_inputs([img], obs)
+        chunk, trajectory = model.act(img_t, tok_t, state_t, return_trajectory=True, update_memory=True)
 
     chunk = denormalize(chunk, action_mean, action_std).squeeze(0).cpu().numpy()
     labels = CFG["action_labels"]
@@ -181,7 +181,7 @@ def run_task(model, tok_t, CFG):
         if done:
             break
         with torch.inference_mode():
-            img_t, state_t = process_inputs([img, gripimg], obs)
+            img_t, state_t = process_inputs([img], obs)
             chunk = model.act(img_t, tok_t, state_t, update_memory=True)
             actions = process_chunk(chunk)
 
@@ -326,6 +326,6 @@ def see_attn(model, tok_t, CFG):
                 img=img,
             )
 
-# run_task(model, tok_t, CFG)
+run_task(model, tok_t, CFG)
 # plot_chunk(model, tok_t, CFG)
-see_attn(model, tok_t, CFG)
+# see_attn(model, tok_t, CFG)
