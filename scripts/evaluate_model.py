@@ -16,10 +16,10 @@ import json
 if 1:
     CFG = dict(
         # paths
-        checkpoint   = "../checkpoints/best.pt",
+        checkpoint   = "../checkpoints/masked/best2.pt",
 
         # task
-        env_name     = "button-press-topdown-v3",
+        env_name     = "basketball-v3",
         prompt       = "",
         seed         = 37,
 
