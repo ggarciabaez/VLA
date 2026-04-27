@@ -1,58 +1,20 @@
 from dataclasses import dataclass, field
-
-@dataclass
-class oldVLAConfig:
-    model_name: str = "vla"  # not used anywhere, still nice for metadata
-    siglip_model_id: str = "google/siglip2-base-patch16-224"
-    n_trainable: int = 4
-    dropout: float = 0.1
-
-    # Fusion transformer
-    d_model: int = 1024  # set this at 0 to use siglip default
-    n_heads: int = 8
-    n_layers: int = 4
-    lq_size: int = 64
-    # ffn_dim is d_model * 4
-
-    # Action expert
-    action_heads: int = 8
-    action_layers: int = 8
-    chunk_size: int = 16
-    flow_steps: int = 10
-
-
-    # Memory
-    mem_len: int = 10
-
-    state_dim: int = 39  # your input twin
-    action_dim: int = 4  # your output twin
-    flow_dim: int = 256
-
-    # head configs
-    img_size: int = 224
-
-    # normalization stats, make sure to catch these before training
-    action_mean: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
-    action_std: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
-
 @dataclass
 class VLAConfig:
     siglip_model_id: str = "google/siglip2-base-patch16-224"
-    n_trainable: int = 4
+    n_trainable: int = 0  # BLIP-2 actually uses frozen encoders!
     dropout: float = 0.1
 
     d_model: int = 1024
-    state_dim: int = 39
+    state_dim: int = 4
     action_dim: int = 4
 
     chunk_size: int = 32
     flow_steps: int = 10
-    film_layers: int = 4
 
-    n_heads: int = 8
+    n_heads: int = 8  # Why do heads seem like they're free compute?
     n_layers: int = 8
     lq_size: int = 64
-    mem_len: int = 10
 
     img_size: int = 224
 

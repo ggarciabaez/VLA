@@ -1,261 +1,332 @@
-# MT50 VLA Architecture
+# VLA Architecture
 
 ## Overview
 
-A Vision-Language-Action model for multi-task robotic manipulation across 50 MetaWorld tasks.
-Perception and language are compressed into reasoning tokens via a Q-Former. An action expert
-generates a MEM token summarizing the current timestep, uses it as a FiLM conditioning vector
-to produce a velocity field via flow matching, and pushes the MEM token onto a frozen episodic
-memory stack for future timesteps.
+The current codebase implements a single-frame Vision-Language-Action model trained on MetaWorld MT50
+demonstrations with flow matching.
+
+The live model is centered on four pieces:
+
+1. `VisionEncoder` wraps `SiglipVisionModel` and projects patch tokens into `d_model`.
+2. `TextEncoder` wraps `SiglipTextModel`, projects token features into `d_model`, and returns a padding mask.
+3. `QFormer` uses learned query tokens plus text self-attention, then cross-attends those queries into image tokens.
+4. `ActionExpert` predicts a continuous action-chunk velocity field with a Conv1D + cross-attention flow model.
+
+This is the architecture in the current Python modules under `model/`. The older memory-stack design described
+previously is not present in the current implementation.
 
 ---
 
-## Data Flow
+## Top-Level Data Flow
 
+```text
+image -----------------> VisionEncoder ----\
+                                            \
+text tokens -----------> TextEncoder ------- +--> QFormer --> reasoning queries
+                                                                          |
+state -----------------> MLP -------------------------------------------- + append state token
+                                                                          |
+                                                                     ActionExpert
+                                                                          |
+                                                           flow-matched action chunk
 ```
-[image] [text*] [MEM stack]
-    |       |       |
-    +-------+-------+
-            |
-        Q-Former                     * cached per episode
-            |
-     reasoning tokens (B, 64, 768)
-            |
-    +-------+--------+
-    |                |
- [state]     learned_mem_latent
-    |                |
-    +-------+--------+
-            |
-         cross-attn
-            |
-        new_mem_token (B, 1, 768) -----> pushed onto MEM stack
-            |
-         FiLM MLP
-            |
-      velocity field (B, C, action_dim)
-            |
-      Euler integration
-            |
-      action chunk (B, C, action_dim)
-```
+
+At training time, the model receives:
+
+- `img`: `(B, 3, H, W)` uint8 or float image tensors
+- `txt`: `(B, seq_len)` token ids
+- `state`: `(B, state_dim)` robot state
+- `action`: `(B, chunk_size, action_dim)` normalized target action chunks
+
+`VLA.encode()` returns `torch.cat([reasoning_queries, state_token], dim=1)`, so the action model consumes
+`lq_size + 1` context tokens.
 
 ---
 
-## Stage 1 — Encoders
+## Module Breakdown
 
-| Stream | Module | Output shape | Notes |
-|---|---|---|---|
-| Current image | SigLIP ViT B/16 | (B, 196, 768) | Last 2 layers unfrozen |
-| Task instruction | SigLIP Text | (B, 64, 768) | Cached per episode |
-| Robot state | Linear + LayerNorm | (B, 1, 768) | Action expert only |
-| MEM stack | Frozen past tokens | (B, T, 768) | T ≤ 10, zero-padded early in episode |
+### 1. Vision Encoder
 
----
+Implemented in `model/heads.py` as `VisionEncoder`.
 
-## Stage 2 — Q-Former (Reasoning Head)
+- Backbone: `google/siglip2-base-patch16-224`
+- Input normalization: `(x / 255 - 0.5) / 0.5` when the input is `uint8`
+- Resize: bilinear resize to `cfg.img_size` if needed
+- Output: `last_hidden_state` projected from SigLIP hidden size into `cfg.d_model`
 
-Goal: compress current observations + episodic memory into 64 dense reasoning tokens.
+Default training config in `trainer.py` sets:
 
-### Embeddings applied to context before cross-attention
+- `d_model = 1024`
+- `img_size = 224`
+- `n_trainable = 2`
 
-SigLIP already encodes positional information internally into image patches and text tokens.
-Adding position embeddings on top would be redundant. Type embeddings are applied to all three
-modalities so queries know what they are attending to. MEM additionally receives recency
-positional embeddings since it has no backbone-level encoding.
+For a single image per sample, the output is effectively:
 
-| Modality | Type embedding | Position embedding |
-|---|---|---|
-| Image (196 tokens) | ✓ `type_embed(IMAGE)` | ✗ already in SigLIP |
-| Text (64 tokens) | ✓ `type_embed(TEXT)` | ✗ already in SigLIP |
-| MEM (T tokens) | ✓ `type_embed(MEM)` | ✓ `recency_pos_embed(0..T-1)` |
+- image tokens: `(B, N_img, d_model)`
 
-```python
-# Embedding vocabularies
-type_embed      = nn.Embedding(3, d_model)   # IMAGE=0, TEXT=1, MEM=2
-recency_pos_embed = nn.Embedding(mem_len, d_model)  # 0=most recent, 9=oldest
-```
+For SigLIP B/16 at 224x224 this is typically 196 patch tokens plus the model's sequence convention from the
+backbone output.
 
-### Attention structure
+### 2. Text Encoder
 
-```
-image   = image + type_embed(IMAGE)
-text    = text  + type_embed(TEXT)
-mem     = mem   + recency_pos_embed(0..T-1) + type_embed(MEM)
+Implemented in `model/heads.py` as `TextEncoder`.
 
-context = concat(image, text, mem)        # (B, 196 + 64 + T, 768)  K and V
-queries = learned_queries                 # (B, 64, 768)              Q only
+- Backbone: `SiglipTextModel`
+- Tokenizer: `AutoTokenizer.from_pretrained(cfg.siglip_model_id)`
+- Projection: SigLIP hidden size -> `cfg.d_model`
+- Masking: returns `~torch.isin(tokens, special_ids)`
 
-for each layer:
-    queries = self_attn(Q=queries, K=queries, V=queries)
-    queries = cross_attn(Q=queries, K=context, V=context)
+Outputs:
 
-reasoning_tokens = queries                # (B, 64, 768)
-```
+- text tokens: `(B, N_txt, d_model)`
+- text mask: `(B, N_txt)` where `True` means "real token" and `False` means special/padding token
 
-### Attention table
+The trainer pre-tokenizes prompt variants once at dataset construction time and samples one prompt variant
+per task batch.
 
-| Operation | Q | K | V | Purpose |
-|---|---|---|---|---|
-| Self-attention | queries | queries | queries | Queries coordinate before reading context |
-| Cross-attention | queries | [image \| text \| MEM] | [image \| text \| MEM] | Queries read current obs + frozen past |
+### 3. State Encoder
 
-### Key properties
-
-- MEM tokens appear only as K and V — read-only, never act as Q
-- Text padding mask and MEM zero-padding mask concatenated into a single `key_padding_mask`
-- Text embeddings computed once at episode start and reused every timestep
-
-### Config
+Implemented directly in `model/vla.py`.
 
 ```python
-n_queries        = 64
-n_qformer_layers = 4
-n_heads          = 6      # head_dim = 128, Flash Attention eligible
-mem_len          = 10     # ~10 seconds of episodic memory
+nn.Sequential(
+    nn.Linear(state_dim, d_model),
+    nn.GELU(),
+    nn.Linear(d_model, d_model),
+)
 ```
 
----
+Output:
 
-## Stage 3 — Action Expert
+- state token: `(B, d_model)` then unsqueezed to `(B, 1, d_model)`
 
-Goal: produce a new MEM token and a velocity field for flow matching.
-The MEM token is the **only** information bridge between perception and action.
-Training loss propagates through it directly, forcing meaningful compression.
+The state token does not participate in the Q-Former. It is appended after fusion and consumed only by the
+action model.
 
-### Step 1 — MEM token generation
+### 4. Q-Former
 
-```
-Q = learned_mem_latent                         # (B, 1, 768)  trained parameter
-K = V = concat(reasoning_tokens, state_token)  # (B, 65, 768)
+Implemented in `model/fusion.py`.
 
-new_mem_token = cross_attn(Q, K, V)            # (B, 1, 768)
-```
+The current Q-Former is not BLIP-2 style full multimodal cross-attention over image, text, and memory.
+Its actual pattern is:
 
-### Step 2 — FiLM conditioning
+1. Start from learned queries `self.lq` of shape `(1, lq_size, d_model)`.
+2. Concatenate learned queries with text tokens.
+3. Run self-attention over `[queries | text]`.
+4. Split them back apart.
+5. Run cross-attention from queries into image tokens only.
+6. Apply the FFN and repeat for `n_layers`.
 
-```
-film_vector = Linear(new_mem_token.squeeze(1))  # (B, d_film)
-```
+Per layer:
 
-MEM token and film_vector are constant across all Euler steps —
-recompute once per chunk, not per integration step.
-
-### Step 3 — Velocity field (per chunk step)
-
-Each chunk step receives three inputs before entering the FiLM MLP:
-- Noisy action at that step: `(B, action_dim)`
-- Flow timestep embedding: `(B, t_dim)` — drives time-varying denoising dynamics
-- Chunk position embedding: `(B, chunk_pos_dim)` — tells the MLP which step it is computing
-
-```python
-chunk_pos_embed = nn.Embedding(chunk_size, chunk_pos_dim)  # 0..C-1
-
-for step in range(C):
-    x_in = concat(
-        noisy_chunk[:, step, :],    # (B, action_dim)
-        t_embedding,                # (B, t_dim)        — constant within Euler step
-        chunk_pos_embed(step),      # (B, chunk_pos_dim)— constant within Euler loop
-    )                               # (B, action_dim + t_dim + chunk_pos_dim)
-    velocity[:, step, :] = FiLM_MLP(x_in, film_vector)
+```text
+qt = concat(learned_queries, text_tokens)
+qt = qt + self_attn(LN(qt), mask=[queries valid][text mask])
+q, t = split(qt)
+q = q + cross_attn(LN(q), image_tokens, image_tokens)
+q = q + ffn(LN(q))
+t = t + ffn(LN(t))
 ```
 
-Chunk steps are processed independently. Trajectory smoothness is a learned property
-enforced by the flow matching objective on smooth expert demonstrations, not by
-explicit cross-step coupling in the architecture.
+Important details:
 
-### Division of labor
+- Text participates in self-attention with the learned queries.
+- Image tokens are only used as keys/values in cross-attention.
+- The text stream is updated layer-by-layer and fed into the next layer.
+- There is no episodic memory mechanism in the current `QFormer`.
 
-| Signal | Answers |
-|---|---|
-| `film_vector` (from MEM) | What motion to generate — task, object, state, history |
-| `t_embedding` | How to denoise at this noise level — time-varying dynamics |
-| `chunk_pos_embed` | Which step of the chunk — step-specific trajectory shaping |
+Default trainer config:
 
-### Attention table
+- `n_layers = 8`
+- `n_heads = 8`
+- `lq_size = 64`
+- `d_model = 1024`
 
-| Operation | Q | K | V | Purpose |
-|---|---|---|---|---|
-| Cross-attention | learned_mem_latent | [reasoning \| state] | [reasoning \| state] | Compress perception + state into MEM token |
+Output:
 
-### Config
+- reasoning queries: `(B, lq_size, d_model)`
 
-```python
-chunk_size    = 8     # C
-action_dim    = 4     # MetaWorld: x, y, z, gripper
-t_dim         = 64    # sinusoidal flow timestep embedding dim
-chunk_pos_dim = 64    # chunk step position embedding dim
-d_film        = 768
-n_film_layers = 4
-euler_steps   = 10
+### 5. Attention Implementation
+
+Implemented in `model/mha_impl.py` as `MultiHeadAttention`.
+
+- Uses `torch.nn.functional.scaled_dot_product_attention`
+- Uses packed QKV projection for self-attention
+- Uses separate Q/K/V projections for cross-attention
+- Enables Flash SDP on CUDA
+- Keeps the mask in SDPA form rather than building explicit attention matrices
+
+This module is shared by both the Q-Former and the action bottleneck attention.
+
+### 6. Action Expert
+
+Implemented in `model/action_expert.py`.
+
+The current action head is not FiLM-conditioned on a memory token. Instead it is a flow-matching model with:
+
+- time embedding MLP
+- Conv1D temporal stack
+- a semantic bottleneck where action-sequence features attend to fused context tokens
+- Conv1D decoder back to action-space velocities
+
+#### Velocity Generator
+
+Inputs:
+
+- `noisy_actions`: `(B, chunk_size, action_dim)`
+- `t`: `(B,)`
+- `context_tokens`: `(B, lq_size + 1, d_model)`
+
+Pipeline:
+
+1. `t` -> sinusoidal embedding -> MLP -> `(B, d_model)`
+2. action chunk -> transpose to `(B, action_dim, chunk_size)` -> `Conv1d` input projection
+3. two residual `Conv1DBlock`s with AdaLN-style time conditioning
+4. transpose to sequence form and cross-attend action features into projected context tokens
+5. two more residual `Conv1DBlock`s
+6. output `Conv1d` -> velocity field `(B, chunk_size, action_dim)`
+
+The bottleneck cross-attention is:
+
+```text
+queries = action-sequence latents
+keys    = projected context tokens
+values  = projected context tokens
 ```
 
----
+So the action chunk queries the fused reasoning/state context.
 
-## Stage 4 — Flow Matching
+#### Flow-Matching Objective
 
-```python
-x = randn(B, C, action_dim)
-dt = 1.0 / euler_steps
-for i in range(euler_steps):
-    t = full((B,), i / euler_steps)
-    v = expert.compute_velocity(x, t, film_vector)
+Training in `ActionExpert.loss()`:
+
+```text
+x0      ~ N(0, I)
+t       ~ Uniform(0, 1)
+xt      = (1 - t) * x0 + t * actions
+target  = actions - x0
+loss    = MSE(velocity_model(xt, t, context), target)
+```
+
+Inference in `ActionExpert.sample()`:
+
+```text
+x <- N(0, I)
+repeat flow_steps times:
+    t = step / flow_steps
+    v = velocity_model(x, t, context)
     x = x + v * dt
-action_chunk = x    # (B, C, action_dim)
+return x
 ```
 
-MEM token and film_vector are constant across all Euler steps — KV cache
-of the MEM cross-attention is pre-computable before the integration loop.
+Default trainer config:
+
+- `chunk_size = 32`
+- `action_dim = 4`
+- `flow_steps = 10`
 
 ---
 
-## Memory Stack Protocol
+## Training/Data Pipeline
 
-```python
-# Episode start
-MEM          = zeros(B, mem_len, d_model)
-mem_pad_mask = ones(B, mem_len, dtype=bool)    # all slots empty
+The training entry point is `trainer.py`.
 
-# After each chunk
-MEM          = concat(new_mem_token, MEM[:, :mem_len-1, :], dim=1)
-mem_pad_mask = concat([False], mem_pad_mask[:, :mem_len-1])
-```
+### Dataset Layout
 
-MEM tokens are never modified after creation. Each token implicitly encodes:
-- What was observed (via reasoning tokens)
-- What the robot state was (via state token)
-- What action followed (via flow matching loss backpropagating through MEM)
+`MT50Dataset` loads merged episode shards from:
+
+- `data/dataset_shards/checkpoints`
+
+Expected per-episode arrays:
+
+- `images`: `(T, N, 3, H, W)`
+- `states`: `(T, N, state_dim_raw)`
+- `actions`: `(T, N, action_dim)`
+- `chunk_indices`: `(T, chunk_size)`
+- `task_names`: `(N,)`
+
+At load time the trainer:
+
+1. loads every shard into RAM
+2. normalizes actions using `norm_stats.npz`
+3. slices states down to `cfg["state_dim"]`
+4. preindexes chunk targets with `actions_t[chunk_indices]`
+5. tokenizes all prompt variants from `task_prompts.json`
+
+The hot training loop then uses direct tensor slicing rather than a `DataLoader`.
+
+### Episode-Level Training Loop
+
+For each batch of task columns:
+
+1. sample one prompt variant per task batch
+2. iterate through all timesteps in the episode
+3. slice current image/state/action chunk for that timestep
+4. run `model.loss(img_t, txt, state_t, action_t)`
+5. accumulate gradients for `optimizer_stride` timesteps
+6. step AdamW with cosine decay
+
+This means the current trainer behaves like sequential episode playback, but the live model itself is still
+single-step and stateless.
 
 ---
 
-## Embedding Vocabulary Summary
+## Current Config Surface
 
-| Embedding | Type | Size | Applied to |
-|---|---|---|---|
-| `type_embed` | `nn.Embedding(3, 768)` | 3 entries | All context modalities |
-| `recency_pos_embed` | `nn.Embedding(10, 768)` | 10 entries | MEM stack slots |
-| `chunk_pos_embed` | `nn.Embedding(8, 64)` | 8 entries | Action chunk steps |
+There are two sources of defaults:
+
+- `model/utils.py::VLAConfig` defines model-level defaults
+- `trainer.py::CFG` overrides them for training
+
+The effective training architecture currently comes from `trainer.py`, not the dataclass defaults alone.
+
+Key active trainer values:
+
+| Key | Value |
+|---|---:|
+| `siglip_model_id` | `google/siglip2-base-patch16-224` |
+| `d_model` | `1024` |
+| `n_heads` | `8` |
+| `n_layers` | `8` |
+| `lq_size` | `64` |
+| `state_dim` | `4` |
+| `action_dim` | `4` |
+| `chunk_size` | `32` |
+| `flow_steps` | `10` |
+| `film_layers` | `4` |
+| `dropout` | `0.1` |
+| `n_trainable` | `2` |
+
+Note: `film_layers` remains in config, but the current `VelocityGenerator` does not build a FiLM MLP stack from it.
 
 ---
 
-## Auxiliary Training Opportunities
+## Known Drift In Repo
 
-| Signal | Source | Benefit |
-|---|---|---|
-| Task phase classification | Linear probe on MEM tokens | Forces semantically ordered memory |
-| Binary success prediction | Linear probe on final MEM token | Value function for RL finetuning |
-| Attention weight logging | Q-Former cross-attn | Which image regions / MEM slots drive each query |
+Some files still reflect an older memory-based architecture and are not consistent with the current `model/`
+implementation:
+
+- the previous `architecture.md` described a memory stack and FiLM-conditioned MEM token path
+- `trainer.py` still calls `model.reset()` and `update_memory=True`, but `model/vla.py` does not implement them
+- `scripts/evaluate_model.py` also assumes memory/update APIs that are not present in the live model
+
+So the source of truth for the current architecture is:
+
+- `model/vla.py`
+- `model/heads.py`
+- `model/fusion.py`
+- `model/action_expert.py`
+- `model/mha_impl.py`
 
 ---
 
-## Parameter Budget (approximate)
+## Summary
 
-| Component | Parameters | Trainable |
-|---|:-:|---|
-| SigLIP vision (2 layers unfrozen) | ~86M | ~10M |
-| SigLIP text (2 layers unfrozen) | ~39M | ~5M |
-| State encoder | ~1M | ~1M |
-| Q-Former (4 layers) | ~28M | ~28M |
-| Action expert (cross-attn + FiLM MLP) | ~12M | ~12M |
-| **Total** | **~166M** | **~56M** |
+The current project is a stateless, single-frame VLA with:
 
+- SigLIP image and text backbones
+- learned-query fusion where text interacts through self-attention and images through cross-attention
+- a separate state token appended after fusion
+- a Conv1D flow-matching action generator conditioned through bottleneck cross-attention
+
+In the future, we will implement the HAMLET memory component for long-term memory.

@@ -1,4 +1,4 @@
-from transformers import SiglipVisionModel, SiglipTextModel, Siglip2Tokenizer, AutoTokenizer, logging
+from transformers import SiglipVisionModel, SiglipTextModel, AutoTokenizer, logging
 from torch import nn
 import torch
 from torch.functional import F
@@ -36,8 +36,8 @@ class VisionEncoder(nn.Module):
         if x.shape[-2:] != (self.image_size, self.image_size):
             x = F.interpolate(x, size=(self.image_size, self.image_size), mode="bilinear", align_corners=False)
 
-        out = self.backbone(pixel_values=x, return_dict=True)
-        return self.proj(out.last_hidden_state)
+        out = self.backbone(pixel_values=x).last_hidden_state
+        return self.proj(out)
 
     def multiforward(self, x: torch.Tensor) -> torch.Tensor:
         out = torch.empty(x.shape[0], 0, self.cfg.d_model, device=x.device)
@@ -47,7 +47,8 @@ class VisionEncoder(nn.Module):
                 img = F.interpolate(x[:, i], size=(self.image_size, self.image_size), mode="bilinear", align_corners=False)
             else:
                 img = x[:, i]
-            out = torch.cat([out, self.proj(self.backbone(pixel_values=img, return_dict=True).last_hidden_state)], axis=1)
+            # TODO: this can probably be batched, no need to go 1 by 1
+            out = torch.cat([out, self.proj(self.backbone(pixel_values=img).last_hidden_state)], axis=1)
 
         return out
 
@@ -56,11 +57,6 @@ class TextEncoder(nn.Module):
         super(TextEncoder, self).__init__()
         self.cfg = cfg
         self.backbone = SiglipTextModel.from_pretrained(cfg.siglip_model_id)
-        self._tokenizer = AutoTokenizer.from_pretrained(cfg.siglip_model_id)
-        self.special_ids = torch.tensor(self._tokenizer.all_special_ids)
-        self.tokenize = lambda x: self._tokenizer.encode(x, padding="max_length", max_length=64, truncation=True,
-                                                         return_tensors="pt")
-
         self.hidden_size = int(self.backbone.config.hidden_size)
         # TODO: could be a good idea to just always have a projection for a new embedding space
         if cfg.d_model <= 0:
@@ -68,6 +64,10 @@ class TextEncoder(nn.Module):
         self.proj = nn.Linear(self.hidden_size, self.cfg.d_model)
         self.backbone = freeze_except_last_n_layers(self.backbone, cfg.n_trainable, model_type="text")
 
+        self._tokenizer = AutoTokenizer.from_pretrained(cfg.siglip_model_id)
+        self.special_ids = torch.tensor(self._tokenizer.all_special_ids)
+        self.tokenize = lambda x: self._tokenizer.encode(x, padding="max_length", max_length=64, truncation=True,
+                                                         return_tensors="pt")
 
     def forward(self, tokens):
         """
@@ -75,9 +75,7 @@ class TextEncoder(nn.Module):
         :param tokens: Tokenized (B, Tk) strings as a tensor. Remember to move to the proper device!
         :return: Text embeddings of dimension d_model, as well as the padding mask. The padding mask is False for padding tokens.
         """
-        # TODO: for Siglip2, there's EOS token and pad token. Right now we leave the EOS, but we might need to remove it later.
-        # ~torch.isin(tokens, self.special_ids.to(tokens.device))
-        return self.proj(self.backbone(tokens).last_hidden_state), torch.ones_like(tokens, dtype=torch.bool, device=tokens.device)
+        return self.proj(self.backbone(tokens).last_hidden_state), ~torch.isin(tokens, self.special_ids.to(tokens.device))
 
 if __name__ == '__main__':
     # test the model
