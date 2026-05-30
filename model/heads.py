@@ -4,7 +4,6 @@ import torch
 from torch.functional import F
 from model.utils import VLAConfig, freeze_except_last_n_layers  # covered here
 logging.set_verbosity_error()
-
 class VisionEncoder(nn.Module):
     def __init__(self, cfg: VLAConfig):
         super(VisionEncoder, self).__init__()
@@ -89,7 +88,7 @@ if __name__ == '__main__':
     frames = torch.cat([frame.unsqueeze(1), frame2.unsqueeze(1)], axis=1)
     print(frames.shape)
     cam.release()
-    cfg = VLAConfig()
+    cfg = VLAConfig(siglip_model_id="google/siglip2-so400m-patch14-224")
     encoder = VisionEncoder(cfg)
     out = encoder.forward(
         frame

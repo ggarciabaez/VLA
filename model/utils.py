@@ -9,7 +9,7 @@ class VLAConfig:
     state_dim: int = 4
     action_dim: int = 4
 
-    chunk_size: int = 32
+    chunk_size: int = 16
     flow_steps: int = 10
 
     n_heads: int = 8  # Why do heads seem like they're free compute?

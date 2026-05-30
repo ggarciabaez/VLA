@@ -22,33 +22,45 @@ class SinusoidalTimeEmbedding(nn.Module):
 
 
 class Conv1DBlock(nn.Module):
-    def __init__(self, channels, time_embed_dim):
+    def __init__(self, channels, time_embed_dim, ctx_dim):
         super().__init__()
         self.conv1 = nn.Conv1d(channels, channels, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(channels, channels, kernel_size=3, padding=1)
-        self.act = nn.GELU()
+        self.act = nn.GELU(approximate='tanh')
         self.norm1 = nn.GroupNorm(8, channels)
         self.norm2 = nn.GroupNorm(8, channels)
 
         # AdaLN projection for time
         self.time_mlp = nn.Sequential(
-            nn.GELU(),
+            nn.GELU(approximate='tanh'),
             nn.Linear(time_embed_dim, channels * 2)
         )
+        self.ctx_mlp = nn.Sequential(
+            nn.GELU(approximate='tanh'),
+            nn.Linear(ctx_dim, channels * 2)
+        )
 
-    def forward(self, x, t_embed):
+        nn.init.zeros_(self.time_mlp[-1].weight)
+        nn.init.zeros_(self.time_mlp[-1].bias)
+        nn.init.zeros_(self.ctx_mlp[-1].weight)
+        nn.init.zeros_(self.ctx_mlp[-1].bias)
+
+    def forward(self, x, t_embed, ctx):
         # x: (B, C, L)
         h = self.norm1(x)
         h = self.act(h)
         h = self.conv1(h)
 
-        # AdaLN: time injection
-        time_scale, time_shift = self.time_mlp(t_embed).unsqueeze(-1).chunk(2, dim=1)
-        h = h * (time_scale + 1) + time_shift
-
         h = self.norm2(h)
         h = self.act(h)
         h = self.conv2(h)
+
+        # AdaLN: time injection
+        time_scale, time_shift = self.time_mlp(t_embed).unsqueeze(-1).chunk(2, dim=1)
+        ctx_scale, ctx_shift = self.ctx_mlp(ctx.mean(1)).unsqueeze(-1).chunk(2, dim=1)
+
+        h = h * (time_scale + 1) + time_shift
+        h = h * (ctx_scale + 1) + ctx_shift
 
         return x + h  # Residual connection
 
@@ -64,7 +76,7 @@ class VelocityGenerator(nn.Module):  # TODO: add better configuration / paramete
         self.time_mlp = nn.Sequential(
             SinusoidalTimeEmbedding(d_model),
             nn.Linear(d_model, d_model * 4),
-            nn.GELU(),
+            nn.GELU(approximate='tanh'),
             nn.Linear(d_model * 4, d_model)
         )
 
@@ -74,20 +86,20 @@ class VelocityGenerator(nn.Module):  # TODO: add better configuration / paramete
 
         # 3. Down-sampling / Feature Extraction (Fast 1D CNNs)
         self.down_blocks = nn.ModuleList([
-            Conv1DBlock(d_model, d_model),
-            Conv1DBlock(d_model, d_model)
+            Conv1DBlock(d_model, d_model, d_model),
+            Conv1DBlock(d_model, d_model, d_model)
         ])
 
         # 4. The Semantic Bottleneck (The only expensive part)
         # We project the QFormer context into the velocity space
         self.context_proj = nn.Linear(d_model, d_model)
-        self.bottleneck_attn = MultiHeadAttention(d_model, 4, dropout=cfg.dropout, is_cross=True)
+        self.bottleneck_attn = MultiHeadAttention(d_model, 4, 2, dropout=cfg.dropout, is_cross=True)
         self.bottleneck_norm = nn.LayerNorm(d_model)
 
         # 5. Up-sampling / Decoding
         self.up_blocks = nn.ModuleList([
-            Conv1DBlock(d_model, d_model),
-            Conv1DBlock(d_model, d_model)
+            Conv1DBlock(d_model, d_model, d_model),
+            Conv1DBlock(d_model, d_model, d_model)
         ])
 
         # 6. Output projection to Velocity Field
@@ -101,6 +113,7 @@ class VelocityGenerator(nn.Module):  # TODO: add better configuration / paramete
         """
         # Embed time
         t_embed = self.time_mlp(t)  # (B, d_model)
+        ctx = self.context_proj(context_tokens)
 
         # Transpose actions for Conv1D: (B, action_dim, seq_len)
         x = noisy_actions.transpose(1, 2)
@@ -108,12 +121,12 @@ class VelocityGenerator(nn.Module):  # TODO: add better configuration / paramete
 
         # Pass through Conv Blocks (Fast temporal feature extraction)
         for block in self.down_blocks:
-            x = block(x, t_embed)
+            x = block(x, t_embed, ctx)
 
         # --- BOTTLENECK CROSS-ATTENTION ---
         # Transpose back to sequence format for attention: (B, seq_len, d_model)
         x_seq = x.transpose(1, 2)
-        ctx = self.context_proj(context_tokens)
+
 
         # Action chunk queries the Context tokens
         attn_out = self.bottleneck_attn(self.bottleneck_norm(x_seq), ctx, ctx)
@@ -125,7 +138,7 @@ class VelocityGenerator(nn.Module):  # TODO: add better configuration / paramete
 
         # Pass through Up Blocks
         for block in self.up_blocks:
-            x = block(x, t_embed)
+            x = block(x, t_embed, ctx)
 
         # Output Velocity Field
         v_t = self.output_proj(x)

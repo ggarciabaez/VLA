@@ -6,17 +6,27 @@ from model.mha_impl import MultiHeadAttention
 class QFormerLayer(nn.Module):
     def __init__(self, cfg: VLAConfig):
         super().__init__()
-        self.self_attn = MultiHeadAttention(cfg.d_model, cfg.n_heads, dropout=cfg.dropout)
-        self.cross_attn = MultiHeadAttention(cfg.d_model, cfg.n_heads, dropout=cfg.dropout, is_cross=True)
-        self.ffn = nn.Sequential(
+        self.self_attn = MultiHeadAttention(cfg.d_model, cfg.n_heads, 2, dropout=cfg.dropout)
+        self.cross_attn = MultiHeadAttention(cfg.d_model, cfg.n_heads, 2, dropout=cfg.dropout, is_cross=True)
+        self.n1 = nn.LayerNorm(cfg.d_model)
+        self.n2 = nn.LayerNorm(cfg.d_model)
+
+        self.ffn_q = nn.Sequential(
+            nn.LayerNorm(cfg.d_model),
             nn.Linear(cfg.d_model, cfg.d_model * 4),
-            nn.GELU(),
+            nn.GELU(approximate='tanh'),
             nn.Linear(cfg.d_model * 4, cfg.d_model),
             nn.Dropout(cfg.dropout),
         )
-        self.n1 = nn.LayerNorm(cfg.d_model)
-        self.n2 = nn.LayerNorm(cfg.d_model)
-        self.n3 = nn.LayerNorm(cfg.d_model)
+
+        self.ffn_t = nn.Sequential(
+            nn.LayerNorm(cfg.d_model),
+            nn.Linear(cfg.d_model, cfg.d_model * 4),
+            nn.GELU(approximate='tanh'),
+            nn.Linear(cfg.d_model * 4, cfg.d_model),
+            nn.Dropout(cfg.dropout),
+        )
+
 
     def forward(self, lq, txt, img, mask=None):
         # 1. Self attend the text and query tokens. Tokens are allowed to fully attend each other (no mask)
@@ -28,7 +38,7 @@ class QFormerLayer(nn.Module):
         # Now cross
         q = q + self.cross_attn(self.n2(q), img, img)
         # Return t so that the next layer can use it
-        return q + self.ffn(self.n3(q)), t + self.ffn(self.n3(t))
+        return q + self.ffn_q(q), t + self.ffn_t(t)
 
 
 class QFormer(nn.Module):

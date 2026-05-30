@@ -1,7 +1,7 @@
 # TODO: We can save on storage size by directly storing by action chunks.
 # We can take 1 image, 1 state, and 16 (for example) actions.
 # That way we save a lot of space, and learn better what chunks look like
-from train_utils import get_prompt_table, VLAConfig
+from model.utils import VLAConfig
 import os
 import numpy as np
 from collections import deque
@@ -52,13 +52,6 @@ class VLADatasetWriter:
         self.episode_count = 0
         self.imgsz = cfg.img_size
         self.chnk = cfg.chunk_size
-
-        prompt_path = os.path.join(save_dir, "task_prompts.json")
-        if not os.path.exists(prompt_path):
-            import json
-            with open(prompt_path, "w") as f:
-                json.dump(get_prompt_table(task_names), f, indent=2)
-            print(f"Saved task prompts → {prompt_path}")
 
     def start_episode(self):
         self._images_list  = []
@@ -126,7 +119,7 @@ class BatchAgent:
             a.reset()
 
 cfg = VLAConfig(  # we only really use img_size and chunk_size
-    chunk_size=32
+    chunk_size=16
 )
 
 SAVE_DIR  = "../data/dataset_shards/mt50"
@@ -145,15 +138,15 @@ if __name__ == "__main__":
         render_mode="rgb_array",
         seed=SEED,
         envs_list=policy_names,
-        width=224,
-        height=224,
-        camera_name="topview",
+        width=cfg.img_size,
+        height=cfg.img_size,
+        camera_name="topdown",
     )
     agent = BatchAgent(agent_classes)
     saver  = BackgroundSaver()
     writer = VLADatasetWriter(cfg, SAVE_DIR, task_names=policy_names, saver=saver)
-
-    for ep in range(EPISODES):
+    n_eps = 0
+    while n_eps < EPISODES:
         SEED += 1
         obs, _info = env.reset(seed=SEED)
         writer.start_episode()
@@ -163,10 +156,15 @@ if __name__ == "__main__":
             obs, _reward, terminated, truncated, _info = env.step(actions)
             imgs = np.array(env.render())
             writer.add_step(imgs, obs, actions)
-            if np.all(terminated) or np.all(truncated):
+            if np.all(_info["success"]):
+                n_eps += 1
+                print(f"All tasks succeeded at {step+1} steps")
+                writer.end_episode()
                 break
+        else:
+            print(f"Exhausted all steps. {len(np.where(_info['success'])[0])} tasks failed. Trying again with {SEED+1}...")
 
-        writer.end_episode()
+        
 
     # Flush the final background save before exiting
     print("Waiting for final save …")

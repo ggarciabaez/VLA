@@ -2,6 +2,7 @@
 eval.py — VLA inference and action visualization.
 
 Edit the CFG block at the top, then run.
+TODO: look at data quality, i'm out of options here.
 """
 
 import numpy as np
@@ -12,14 +13,15 @@ import metaworld
 from model.vla import VLA
 from model.utils import VLAConfig
 import json
+import cv2
 # ── Config — edit these ───────────────────────────────────────────────────────
 if 1:
     CFG = dict(
         # paths
-        checkpoint   = "../checkpoints/masked/best2.pt",
+        checkpoint   = "../checkpoints/best.pt",
 
         # task
-        env_name     = "basketball-v3",
+        env_name     = "soccer-v3",
         prompt       = "",
         seed         = 37,
 
@@ -27,15 +29,12 @@ if 1:
         action_labels = ["x", "y", "z", "gripper"],
         # match training camera convention from generate_mt50_data.py
         policy_camera = "default",
-        # optional postprocessing for debugging action-frame mismatches
-        action_permutation = [0, 1, 2, 3],
-        action_signs = [1.0, 1.0, 1.0, 1.0],
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     if not CFG["prompt"]:
-        with open("../data/task_prompts.json") as f:
+        with open("../data/dataset_shards/checkpoints/task_prompts.json") as f:
             CFG["prompt"] = json.load(f)[CFG["env_name"]][0]
             print(CFG["env_name"])
 
@@ -57,8 +56,6 @@ def process_inputs(img, obs):
 
 def process_chunk(chunk, idx=None):
     chunk = denormalize(chunk, action_mean, action_std).squeeze(0).cpu().numpy()
-    chunk = chunk[:, CFG["action_permutation"]]
-    chunk = chunk * np.array(CFG["action_signs"], dtype=np.float32)
     if idx is None:
         return chunk
     return [chunk[idx]]
@@ -108,10 +105,10 @@ def plot_chunk(model, tok_t, CFG):
     gripenv.reset(seed=CFG["seed"])
     img = np.array(env.render())  # (H, W, 3) uint8
     gripimg = np.array(gripenv.render())
-
+    model.action_expert.return_traj = True
     with torch.inference_mode():
         img_t, state_t = process_inputs([img], obs)
-        chunk, trajectory = model.act(img_t, tok_t, state_t, return_trajectory=True, update_memory=True)
+        chunk, trajectory = model.act(img_t, tok_t, state_t)
 
     chunk = denormalize(chunk, action_mean, action_std).squeeze(0).cpu().numpy()
     labels = CFG["action_labels"]
@@ -152,7 +149,6 @@ def plot_chunk(model, tok_t, CFG):
     plt.show()
 
 def run_task(model, tok_t, CFG):
-    import cv2
     fig, ax = plt.subplots()
     labels = CFG["action_labels"]
     done = False
@@ -180,9 +176,9 @@ def run_task(model, tok_t, CFG):
     for i in range(1000):
         if done:
             break
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
             img_t, state_t = process_inputs([img], obs)
-            chunk = model.act(img_t, tok_t, state_t, update_memory=True)
+            chunk = model.act(img_t, tok_t, state_t)
             actions = process_chunk(chunk)
 
         ax.clear()
@@ -208,124 +204,5 @@ def run_task(model, tok_t, CFG):
     env.reset()
     gripenv.reset()
 
-def see_attn(model, tok_t, CFG):
-    import math, numpy as np
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    def plot_qformer_attention(
-            attn_weights: torch.Tensor,
-            batch_idx: int = 0,
-            layer_idx: int = -1,
-            query_idx: int = 0,
-            img_seq_len: int = 196,
-            txt_seq_len: int = 64,
-            mem_seq_len: int = 10,
-            img=None
-    ):
-        """
-        Slices and plots the cross-attention heatmap for a specific learned query.
-
-        :param attn_weights: Tensor of shape (n_layers, B, n_heads, lq_size, N_ctx)
-        :param batch_idx: Which batch item to visualize
-        :param layer_idx: Which QFormer layer to visualize (default: -1, the last layer)
-        :param query_idx: Which of the 64 learned queries to visualize
-        """
-        # 1. Select the specific layer, batch, and query
-        # Shape becomes: (n_heads, N_ctx)
-        if query_idx == -1:
-            all_queries = attn_weights[layer_idx, batch_idx, :, :, :]
-            query_weights = all_queries.mean(dim=1)
-        else:
-            query_weights = attn_weights[layer_idx, batch_idx, :, query_idx, :]
-
-        # 2. Average across all attention heads to get the consensus view
-        # Shape becomes: (N_ctx,)
-        avg_weights = query_weights.mean(dim=0).detach().cpu().numpy()
-
-        # 3. Slice the context into its respective modalities
-        idx_img_end = img_seq_len
-        idx_txt_end = idx_img_end + txt_seq_len
-
-        img_attn = avg_weights[:idx_img_end]
-        txt_attn = avg_weights[idx_img_end:idx_txt_end]
-        mem_attn = avg_weights[idx_txt_end:]
-
-        # 4. Reshape Image Attention to 2D grid
-        # Assuming square aspect ratio (e.g., 196 patches -> 14x14)
-        grid_size = int(math.sqrt(img_seq_len))
-        assert grid_size * grid_size == img_seq_len, "Image sequence length must be a perfect square for 2D reshaping."
-        img_attn_2d = img_attn.reshape(grid_size, grid_size)
-
-        # --- Plotting ---
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5), gridspec_kw={'width_ratios': [1.5, 3, 1]})
-        fig.suptitle(f'Cross-Attention Weights (Layer {layer_idx}, Query {query_idx})', fontsize=16)
-
-        # Plot Image Attention
-        if img is not None:
-            attn_map = img_attn_2d
-            attn_map = attn_map - attn_map.min()
-            attn_map = attn_map / (attn_map.max() + 1e-8)
-            attn_tensor = torch.tensor(attn_map).unsqueeze(0).unsqueeze(0)  # (1,1,g,g)
-            H, W = img.shape[:2]
-            attn_up = torch.functional.F.interpolate(
-                attn_tensor,
-                size=(H, W),
-                mode="bilinear",
-                align_corners=False
-            )[0, 0].numpy()
-            overlay = (img * (0.3 + 0.7 * attn_up[..., None])).astype(int)
-            axes[0].imshow(overlay)
-        else:
-            sns.heatmap(img_attn_2d, ax=axes[0], cmap='viridis', cbar=True, square=True)
-            axes[0].set_title('Image Patches Spatial Attention')
-            axes[0].axis('off')
-
-        # Plot Text Attention
-        # Reshaping to 1D heatmap (1 x txt_seq_len) for better visibility
-        sns.heatmap(txt_attn[np.newaxis, :], ax=axes[1], cmap='viridis', cbar=True, yticklabels=False)
-        axes[1].set_title('Text Token Attention')
-        axes[1].set_xlabel('Token Index')
-
-        # Plot Memory Attention
-        sns.heatmap(mem_attn[np.newaxis, :], ax=axes[2], cmap='viridis', cbar=True, yticklabels=False)
-        axes[2].set_title('Memory Slot Attention')
-        axes[2].set_xlabel('Memory Recency (Older -> Newer)')
-
-        plt.tight_layout()
-        plt.show()
-
-
-    env = gym.make(
-        "Meta-World/MT1",
-        env_name=CFG["env_name"],
-        seed=CFG["seed"],
-        render_mode="rgb_array",
-        camera_name="gripperPOV"
-    )
-    obs, _info = env.reset(seed=CFG["seed"])
-    import cv2
-    img = np.array(env.render())  # (H, W, 3) uint8
-    # cv2.imwrite("../sandbox/img.png", img)
-
-    with torch.inference_mode():
-        img_t, state_t = process_inputs([img], obs)
-        img_enc, txt_enc, txt_mask = model._get_encodings(img_t, tok_t)
-        reasoning, attn = model._fuse(img_enc, txt_enc, txt_mask, return_weights=True)
-    print(reasoning.shape, attn.shape)
-    for i in range(attn.shape[0]):  # layer idx
-        if 1:  # query idx
-            plot_qformer_attention(
-                attn,
-                batch_idx=0,
-                layer_idx=i,
-                query_idx=-1,
-                img_seq_len=196,
-                txt_seq_len=64,
-                mem_seq_len=10,
-                img=img,
-            )
-
 run_task(model, tok_t, CFG)
 # plot_chunk(model, tok_t, CFG)
-# see_attn(model, tok_t, CFG)
