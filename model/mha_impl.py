@@ -3,7 +3,7 @@ from torch.nn.functional import scaled_dot_product_attention
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, kv_div=None, dropout: float = 0.0,
+    def __init__(self, d_model: int, n_heads: int, kv_div=2, dropout: float = 0.0,
                  is_cross: bool = False):
         super().__init__()
         assert d_model % n_heads == 0

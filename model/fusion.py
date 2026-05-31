@@ -11,6 +11,8 @@ class QFormerLayer(nn.Module):
         self.n1 = nn.LayerNorm(cfg.d_model)
         self.n2 = nn.LayerNorm(cfg.d_model)
 
+        self.txt_film = nn.Linear(cfg.d_model, cfg.d_model * 2)
+
         self.ffn_q = nn.Sequential(
             nn.LayerNorm(cfg.d_model),
             nn.Linear(cfg.d_model, cfg.d_model * 4),
@@ -35,9 +37,12 @@ class QFormerLayer(nn.Module):
         q = qt[:, :lq.shape[1], :]
         t = qt[:, lq.shape[1]:, :]
 
-        # Now cross
+        # Stamp text into queries BEFORE image cross-attention can overwrite it
+        txt_pooled = t.mean(1, keepdim=True)  # (B, 1, d_model)
+        scale, shift = self.txt_film(txt_pooled).chunk(2, dim=-1)
+        q = q * (scale + 1) + shift
+
         q = q + self.cross_attn(self.n2(q), img, img)
-        # Return t so that the next layer can use it
         return q + self.ffn_q(q), t + self.ffn_t(t)
 
 

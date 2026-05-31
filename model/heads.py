@@ -17,7 +17,7 @@ class VisionEncoder(nn.Module):
         self.image_size = int(cfg.img_size or getattr(self.backbone.config, "image_size", 224))
         if cfg.d_model <= 0:
             cfg.d_model = self.hidden_size
-        self.proj = nn.Linear(self.hidden_size, cfg.d_model)
+        self.proj = nn.Linear(self.hidden_size, cfg.d_model) if cfg.d_model != self.hidden_size else nn.Identity()
         self.backbone = freeze_except_last_n_layers(self.backbone, cfg.n_trainable, model_type="vision")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -60,7 +60,7 @@ class TextEncoder(nn.Module):
         # TODO: could be a good idea to just always have a projection for a new embedding space
         if cfg.d_model <= 0:
             cfg.d_model = self.hidden_size
-        self.proj = nn.Linear(self.hidden_size, self.cfg.d_model)
+        self.proj = nn.Linear(self.hidden_size, cfg.d_model) #if cfg.d_model != self.hidden_size else nn.Identity()
         self.backbone = freeze_except_last_n_layers(self.backbone, cfg.n_trainable, model_type="text")
 
         self._tokenizer = AutoTokenizer.from_pretrained(cfg.siglip_model_id)

@@ -3,17 +3,17 @@ from dataclasses import dataclass, field
 class VLAConfig:
     siglip_model_id: str = "google/siglip2-base-patch16-224"
     n_trainable: int = 0  # BLIP-2 actually uses frozen encoders!
-    dropout: float = 0.1
+    dropout: float = 0.15
 
-    d_model: int = 1024
+    d_model: int = 768
     state_dim: int = 4
     action_dim: int = 4
 
     chunk_size: int = 16
     flow_steps: int = 10
 
-    n_heads: int = 8  # Why do heads seem like they're free compute?
-    n_layers: int = 8
+    n_heads: int = 8
+    n_layers: int = 16
     lq_size: int = 64
 
     img_size: int = 224
