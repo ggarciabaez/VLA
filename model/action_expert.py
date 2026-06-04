@@ -1,6 +1,6 @@
 from torch import nn
 import torch, math
-from model.mha_impl import MultiHeadAttention
+from model.mha_impl import MultiHeadAttention, TransformerBlock
 from model.utils import VLAConfig  # full coverage here
 
 class SinusoidalTimeEmbedding(nn.Module):
@@ -19,7 +19,6 @@ class SinusoidalTimeEmbedding(nn.Module):
         args = t[:, None] * freqs[None, :]          # (B, half)
         emb  = torch.cat([torch.sin(args), torch.cos(args)], dim=-1)  # (B, dim)
         return emb
-
 
 class Conv1DBlock(nn.Module):
     def __init__(self, channels, time_embed_dim, ctx_dim):
@@ -93,9 +92,9 @@ class VelocityGenerator(nn.Module):  # TODO: add better configuration / paramete
         # 4. The Semantic Bottleneck (The only expensive part)
         # We project the QFormer context into the velocity space
         self.context_proj = nn.Linear(d_model, d_model)
-        self.bottleneck_attn = MultiHeadAttention(d_model, 4, 2, dropout=cfg.dropout, is_cross=True)
-        self.bottleneck_norm = nn.LayerNorm(d_model)
-
+        # A single transformer block? Maybe use multiple?
+        self.bottleneck = nn.ModuleList([TransformerBlock(d_model, 4, 2, dropout=cfg.dropout, is_cross=True) for _ in range(4)])
+        # self.bottleneck = TransformerBlock(d_model, 4, 2, dropout=cfg.dropout, is_cross=True)
         # 5. Up-sampling / Decoding
         self.up_blocks = nn.ModuleList([
             Conv1DBlock(d_model, d_model, d_model),
@@ -129,8 +128,9 @@ class VelocityGenerator(nn.Module):  # TODO: add better configuration / paramete
 
 
         # Action chunk queries the Context tokens
-        attn_out = self.bottleneck_attn(self.bottleneck_norm(x_seq), ctx, ctx)
-        x_seq = x_seq + attn_out
+        for encoder in self.bottleneck:
+            x_seq = encoder(x_seq, ctx, ctx)
+        # x_seq = self.bottleneck(x_seq, ctx, ctx)
 
         # Transpose back for Conv1D: (B, d_model, seq_len)
         x = x_seq.transpose(1, 2)

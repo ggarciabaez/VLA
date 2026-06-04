@@ -146,17 +146,21 @@ Output:
 
 - reasoning queries: `(B, lq_size, d_model)`
 
-### 5. Attention Implementation
+### 5. Attention & Transformer Implementation
 
-Implemented in `model/mha_impl.py` as `MultiHeadAttention`.
+Implemented in `model/mha_impl.py`.
 
-- Uses `torch.nn.functional.scaled_dot_product_attention`
-- Uses packed QKV projection for self-attention
-- Uses separate Q/K/V projections for cross-attention
-- Enables Flash SDP on CUDA
-- Keeps the mask in SDPA form rather than building explicit attention matrices
+- `MultiHeadAttention`: 
+    - Uses `torch.nn.functional.scaled_dot_product_attention`
+    - Uses packed QKV projection for self-attention
+    - Uses separate Q/K/V projections for cross-attention
+    - Enables Flash SDP on CUDA
+- `TransformerBlock`:
+    - A standard Pre-LayerNorm Transformer layer
+    - Includes `MultiHeadAttention` followed by a GELU FFN with residual connections
+    - Used as the building block for both Q-Former and ActionExpert bottleneck
 
-This module is shared by both the Q-Former and the action bottleneck attention.
+This module is shared by both the Q-Former and the action bottleneck.
 
 ### 6. Action Expert
 

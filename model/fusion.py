@@ -1,39 +1,20 @@
 import torch
 import torch.nn as nn
 from model.utils import VLAConfig
-from model.mha_impl import MultiHeadAttention
+from model.mha_impl import MultiHeadAttention, TransformerBlock
 
 class QFormerLayer(nn.Module):
     def __init__(self, cfg: VLAConfig):
         super().__init__()
-        self.self_attn = MultiHeadAttention(cfg.d_model, cfg.n_heads, 2, dropout=cfg.dropout)
-        self.cross_attn = MultiHeadAttention(cfg.d_model, cfg.n_heads, 2, dropout=cfg.dropout, is_cross=True)
-        self.n1 = nn.LayerNorm(cfg.d_model)
-        self.n2 = nn.LayerNorm(cfg.d_model)
+        self.self_attn = TransformerBlock(cfg.d_model, cfg.n_heads, 2, dropout=cfg.dropout)
+        self.cross_attn = TransformerBlock(cfg.d_model, cfg.n_heads, 2, dropout=cfg.dropout, is_cross=True)
 
         self.txt_film = nn.Linear(cfg.d_model, cfg.d_model * 2)
-
-        self.ffn_q = nn.Sequential(
-            nn.LayerNorm(cfg.d_model),
-            nn.Linear(cfg.d_model, cfg.d_model * 4),
-            nn.GELU(approximate='tanh'),
-            nn.Linear(cfg.d_model * 4, cfg.d_model),
-            nn.Dropout(cfg.dropout),
-        )
-
-        self.ffn_t = nn.Sequential(
-            nn.LayerNorm(cfg.d_model),
-            nn.Linear(cfg.d_model, cfg.d_model * 4),
-            nn.GELU(approximate='tanh'),
-            nn.Linear(cfg.d_model * 4, cfg.d_model),
-            nn.Dropout(cfg.dropout),
-        )
-
 
     def forward(self, lq, txt, img, mask=None):
         # 1. Self attend the text and query tokens. Tokens are allowed to fully attend each other (no mask)
         qt = torch.cat([lq, txt], dim=1)
-        qt = qt + self.self_attn.forward(self.n1(qt), attn_mask=mask)  # pre-LN pattern
+        qt = self.self_attn(qt, attn_mask=mask)
         q = qt[:, :lq.shape[1], :]
         t = qt[:, lq.shape[1]:, :]
 
@@ -42,8 +23,8 @@ class QFormerLayer(nn.Module):
         scale, shift = self.txt_film(txt_pooled).chunk(2, dim=-1)
         q = q * (scale + 1) + shift
 
-        q = q + self.cross_attn(self.n2(q), img, img)
-        return q + self.ffn_q(q), t + self.ffn_t(t)
+        q = self.cross_attn(q, img, img)
+        return q, t
 
 
 class QFormer(nn.Module):
