@@ -4,3 +4,8 @@ If MT10 fails, could reconsider the state inputs to include everything once agai
 Think about the camera position. Maybe 2 feeds?
 
 Recollect, restart, improve.
+add dataset metadata to norm_stats.npz to simplify initialization.
+task length for each episode (or something along those lines, I'm now realizing that the format is flawed),
+number of tasks, so on and so forth.
+
+write the preencoder + the checker into the dataset class via metadata.
