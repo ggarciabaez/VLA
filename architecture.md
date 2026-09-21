@@ -239,7 +239,7 @@ The training entry point is `trainer.py`.
 
 `MT50Dataset` loads merged episode shards from:
 
-- `data/dataset_shards/checkpoints`
+- `data/dataset_shards/mt50`
 
 Expected per-episode arrays:
 

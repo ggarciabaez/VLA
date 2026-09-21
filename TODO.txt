@@ -1,0 +1,6 @@
+Scale back to MT10 just to make sure we're doing things right. If MT10 works, take that same frozen model and try it on mt50.
+If it doesn't work, try again.
+If MT10 fails, could reconsider the state inputs to include everything once again, like object positions and such.
+Think about the camera position. Maybe 2 feeds?
+
+Recollect, restart, improve.

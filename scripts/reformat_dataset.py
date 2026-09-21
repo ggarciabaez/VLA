@@ -17,7 +17,7 @@ class AsyncDriveUploader:
         print("Got new upload.")
         self._threadlist.append(threading.Thread(
             target=self._write_and_upload,
-            args=(drive_path, episode_data),
+            args=(drive_path+("" if drive_path.endswith(".npz") else ".npz"), episode_data),
             daemon=True
         ))
         self._threadlist[-1].start()
@@ -57,7 +57,6 @@ def merge_episode(episode_dir: str) -> dict:
 
     for fname in tqdm(shard_files, desc=f"Loading {os.path.basename(episode_dir)}", leave=False):
         shard = np.load(os.path.join(episode_dir, fname))
-
         images_list.append(shard["images"])
         states_list.append(shard["states"])
         actions_list.append(shard["actions"])
@@ -85,7 +84,6 @@ def merge_all_episodes(root: str, drive_save_dir: str):
         d for d in os.listdir(root)
         if os.path.isdir(os.path.join(root, d)) and d.startswith("ep")
     )
-
     uploader = AsyncDriveUploader()
     for ep_dir in episode_dirs:
         full_path = os.path.join(root, ep_dir)
@@ -94,7 +92,7 @@ def merge_all_episodes(root: str, drive_save_dir: str):
         # episodes.append(episode_data)
         if episode_data:
             T = episode_data["images"].shape[0]
-            print(f"Stacked {T} steps of {ep_dir}. Handing off to background writer...")
+            print(f"\nStacked {T} steps of {ep_dir}. Handing off to background writer...")
 
             # 2. Hand off the massive array to the background thread
             uploader.process(os.path.join(drive_save_dir, ep_dir), episode_data)
@@ -107,4 +105,4 @@ def merge_all_episodes(root: str, drive_save_dir: str):
     print("Done!")
 
 # Usage:
-merge_all_episodes("../data/dataset_shards/mt50", "../data/dataset_shards/mt50")
+merge_all_episodes("../data/dataset_shards/mt10", "../data/dataset_shards/mt10/fmt")

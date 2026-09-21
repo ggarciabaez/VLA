@@ -92,8 +92,8 @@ def print_model_counts(model):
 
 if __name__ == "__main__":
     device = torch.device("cuda")
-    # cfg = VLAConfig(siglip_model_id="google/siglip2-so400m-patch14-224")
-    cfg = VLAConfig()
+    cfg = VLAConfig(siglip_model_id="google/siglip2-so400m-patch14-224")
+    # cfg = VLAConfig()
     vla = VLA(cfg).to(device)
     B = 3
     img, txt, state = vla.generate_dummy_inputs(B, device)
@@ -105,11 +105,6 @@ if __name__ == "__main__":
     print(f"Total flops:      {total * 2 * 1e-9:.2f} GFLOPs")
     with torch.inference_mode():
         print(vla.loss(action, img, txt, state))
-        # Text Variation test
-        r1 = vla.encode(img[None, 0], txt[None, 0], state[None, 0])
-        r2 = vla.encode(img[None, 0], txt[None, 2], state[None, 0])
-        print(torch.nn.functional.cosine_similarity(r1.flatten(1), r2.flatten(1)))
-
         import time
         s = time.perf_counter()
         with torch.autocast("cuda", dtype=torch.bfloat16):
