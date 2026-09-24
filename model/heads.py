@@ -1,9 +1,9 @@
-from transformers import SiglipVisionModel, SiglipTextModel, AutoTokenizer, logging
+from transformers import SiglipVisionModel, SiglipTextModel, AutoTokenizer
 from torch import nn
 import torch
 from torch.functional import F
 from model.utils import VLAConfig, freeze_except_last_n_layers  # covered here
-logging.set_verbosity_error()
+
 class VisionEncoder(nn.Module):
     def __init__(self, cfg: VLAConfig):
         super(VisionEncoder, self).__init__()
