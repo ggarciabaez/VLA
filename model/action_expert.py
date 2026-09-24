@@ -40,7 +40,7 @@ class Conv1DBlock(nn.Module):
 
         nn.init.zeros_(self.time_film[-1].weight)
         nn.init.zeros_(self.time_film[-1].bias)
-        nn.init.zeros_(self.ctx_film[-1].weight)
+        nn.init.normal_(self.ctx_film[-1].weight, std=1e-5)
         nn.init.zeros_(self.ctx_film[-1].bias)
 
     def forward(self, x: torch.Tensor, t_embed: torch.Tensor, ctx_embed: torch.Tensor) -> torch.Tensor:

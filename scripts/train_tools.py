@@ -43,7 +43,7 @@ def download_shards(src: Path, dst: Path, max_workers: int = 16) -> list[Path]:
     errors: list[tuple[Path, str]] = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_copy_one, p): p for p in files}
+        futures = {pool.submit(_copy_one, dst, p): p for p in files}
         for fut in tqdm(as_completed(futures), total=len(futures), desc="Downloading shards"):
             dest, err = fut.result()
             if err:

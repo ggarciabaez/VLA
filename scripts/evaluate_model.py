@@ -18,10 +18,10 @@ import cv2
 if 1:
     CFG = dict(
         # paths
-        checkpoint   = "../checkpoints/mt10_4/best.pt",
+        checkpoint   = "../checkpoints/mt10/best.pt",
 
         # task
-        env_name     = "peg-insert-side-v3",
+        env_name     = "push-v3",
         prompt       = "",
         seed         = 37,
 
@@ -170,7 +170,7 @@ def run_task(model, tok_t, CFG):
     )
     obs, _info = env.reset(seed=CFG["seed"])
     gripenv.reset(seed=CFG["seed"])
-    img = np.array(env.render())  # (H, W, 3) uint8
+    img = cv2.cvtColor(np.array(env.render()), cv2.COLOR_BGR2RGB)  # (H, W, 3) uint8
     gripimg = np.array(gripenv.render())
 
     for i in range(1000):
@@ -193,7 +193,7 @@ def run_task(model, tok_t, CFG):
             obs, reward, terminated, truncated, info = env.step(action)
             gripenv.step(action)
 
-            img = np.array(env.render())
+            img = cv2.cvtColor(np.array(env.render()), cv2.COLOR_BGR2RGB)
             gripimg = np.array(gripenv.render())
             cv2.imshow("img", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             cv2.imshow("gripimg", cv2.cvtColor(gripimg, cv2.COLOR_RGB2BGR))
