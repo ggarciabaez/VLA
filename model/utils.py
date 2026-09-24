@@ -13,7 +13,7 @@ class VLAConfig:
     flow_steps: int = 10
 
     n_heads: int = 8
-    n_layers: int = 16
+    n_layers: int = 2
     lq_size: int = 64
 
     img_size: int = 224

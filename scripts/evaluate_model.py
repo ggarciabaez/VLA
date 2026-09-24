@@ -18,17 +18,17 @@ import cv2
 if 1:
     CFG = dict(
         # paths
-        checkpoint   = "../checkpoints/best.pt",
+        checkpoint   = "../checkpoints/mt10_4/best.pt",
 
         # task
-        env_name     = "coffee-push-v3",
+        env_name     = "peg-insert-side-v3",
         prompt       = "",
         seed         = 37,
 
         # visualization
         action_labels = ["x", "y", "z", "gripper"],
         # match training camera convention from generate_mt50_data.py
-        policy_camera = "topdown",
+        policy_camera = "gripperPOV",
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,7 +36,7 @@ if 1:
     if not CFG["prompt"]:
         with open("../data/dataset_shards/mt50/task_prompts.json") as f:
             CFG["prompt"] = json.load(f)[CFG["env_name"]][0]
-            print(CFG["env_name"])
+            print(f"{CFG["env_name"]}: {CFG['prompt']}")
 
 def denormalize(x, mean, std):
     return x * std + mean
@@ -166,7 +166,7 @@ def run_task(model, tok_t, CFG):
         env_name=CFG["env_name"],
         seed=CFG["seed"],
         render_mode="rgb_array",
-        camera_name="gripperPOV"
+        camera_name="topdown"
     )
     obs, _info = env.reset(seed=CFG["seed"])
     gripenv.reset(seed=CFG["seed"])
@@ -177,7 +177,7 @@ def run_task(model, tok_t, CFG):
         if done:
             break
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-            img_t, state_t = process_inputs([img], obs)
+            img_t, state_t = process_inputs(img, obs)
             chunk = model.act(img_t, tok_t, state_t)
             actions = process_chunk(chunk)
 
@@ -197,7 +197,7 @@ def run_task(model, tok_t, CFG):
             gripimg = np.array(gripenv.render())
             cv2.imshow("img", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             cv2.imshow("gripimg", cv2.cvtColor(gripimg, cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            cv2.waitKey(16)
 
             if terminated or truncated:
                 done = True

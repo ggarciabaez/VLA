@@ -105,4 +105,4 @@ def merge_all_episodes(root: str, drive_save_dir: str):
     print("Done!")
 
 # Usage:
-merge_all_episodes("../data/dataset_shards/mt10", "../data/dataset_shards/mt10/fmt")
+merge_all_episodes("../data/dataset_shards/mt10_grip", "../data/dataset_shards/mt10_grip")

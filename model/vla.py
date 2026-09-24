@@ -2,7 +2,7 @@
 # TODO: use direct parameter configuration instead of sending options through the call stack (see use_mask)
 from model.utils import VLAConfig
 from model.heads import TextEncoder, VisionEncoder
-from model.fusion import QFormer
+from model.fusion import PerceiverResampler, QFormer
 from model.action_expert import ActionExpert
 import torch
 from torch import nn
@@ -18,10 +18,9 @@ class VLA(nn.Module):
             nn.GELU(approximate='tanh'),
             nn.Linear(cfg.d_model, cfg.d_model),
         )
-        self.qformer = QFormer(cfg)
+        self.qformer = PerceiverResampler(cfg)
         self.action_expert = ActionExpert(cfg)
         self.use_mask = use_mask
-
 
     def encode(self, img: torch.Tensor, txt: torch.Tensor, state: torch.Tensor):
         """  TODO: add a text cache later
@@ -91,9 +90,9 @@ def print_model_counts(model):
     return sum_total, sum_trainable
 
 if __name__ == "__main__":
-    device = torch.device("cuda")
-    cfg = VLAConfig(siglip_model_id="google/siglip2-so400m-patch14-224")
-    # cfg = VLAConfig()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # cfg = VLAConfig(siglip_model_id="google/siglip2-so400m-patch14-224")
+    cfg = VLAConfig()
     vla = VLA(cfg).to(device)
     B = 3
     img, txt, state = vla.generate_dummy_inputs(B, device)

@@ -122,21 +122,23 @@ cfg = VLAConfig(  # we only really use img_size and chunk_size
     chunk_size=16
 )
 
-SAVE_DIR  = "../data/dataset_shards/mt10"
+SAVE_DIR  = "../data/dataset_shards/mt10_grip"
 EPISODES  = 20
 MAX_STEPS = 200
 SEED      = 37
 policy_names = tuple(MT10().train_classes.keys())
 agent_classes = [policies.ENV_POLICY_MAP[name] for name in policy_names]
+
 if __name__ == "__main__":
     env = gym.make_vec(
-        "Meta-World/MT10",
-        vector_strategy="sync",
+        "Meta-World/custom-mt-envs",
+        vector_strategy="async",
         render_mode="rgb_array",
         seed=SEED,
+        envs_list=policy_names,
         width=cfg.img_size,
         height=cfg.img_size,
-        camera_name="topdown",
+        camera_name="gripperPOV",
     )
     agent = BatchAgent(agent_classes)
     saver  = BackgroundSaver()
@@ -150,7 +152,7 @@ if __name__ == "__main__":
         for step in tqdm(range(MAX_STEPS)):
             actions = agent.get_action(obs)
             obs, _reward, terminated, truncated, _info = env.step(actions)
-            imgs = np.array(env.render())
+            imgs = np.array(env.render())[..., ::-1]  # BGR to RGB
             writer.add_step(imgs, obs, actions)
             if np.all(_info["success"]):
                 n_eps += 1

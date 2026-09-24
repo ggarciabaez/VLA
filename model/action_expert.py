@@ -1,7 +1,6 @@
 from torch import nn
 import torch, math
-from model.mha_impl import MultiHeadAttention, TransformerBlock
-from model.utils import VLAConfig  # full coverage here
+from model.utils import VLAConfig
 
 class SinusoidalTimeEmbedding(nn.Module):
     def __init__(self, dim: int):
@@ -21,7 +20,7 @@ class SinusoidalTimeEmbedding(nn.Module):
         return emb
 
 class Conv1DBlock(nn.Module):
-    def __init__(self, channels, time_embed_dim, ctx_dim):
+    def __init__(self, channels: int, time_embed_dim: int, ctx_dim: int):
         super().__init__()
         self.conv1 = nn.Conv1d(channels, channels, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(channels, channels, kernel_size=3, padding=1)
@@ -29,22 +28,22 @@ class Conv1DBlock(nn.Module):
         self.norm1 = nn.GroupNorm(8, channels)
         self.norm2 = nn.GroupNorm(8, channels)
 
-        # AdaLN projection for time
-        self.time_mlp = nn.Sequential(
+        # FiLM projections for time and multimodal context
+        self.time_film = nn.Sequential(
             nn.GELU(approximate='tanh'),
             nn.Linear(time_embed_dim, channels * 2)
         )
-        self.ctx_mlp = nn.Sequential(
+        self.ctx_film = nn.Sequential(
             nn.GELU(approximate='tanh'),
             nn.Linear(ctx_dim, channels * 2)
         )
 
-        nn.init.zeros_(self.time_mlp[-1].weight)
-        nn.init.zeros_(self.time_mlp[-1].bias)
-        nn.init.zeros_(self.ctx_mlp[-1].weight)
-        nn.init.zeros_(self.ctx_mlp[-1].bias)
+        nn.init.zeros_(self.time_film[-1].weight)
+        nn.init.zeros_(self.time_film[-1].bias)
+        nn.init.zeros_(self.ctx_film[-1].weight)
+        nn.init.zeros_(self.ctx_film[-1].bias)
 
-    def forward(self, x, t_embed, ctx):
+    def forward(self, x: torch.Tensor, t_embed: torch.Tensor, ctx_embed: torch.Tensor) -> torch.Tensor:
         # x: (B, C, L)
         h = self.norm1(x)
         h = self.act(h)
@@ -54,9 +53,9 @@ class Conv1DBlock(nn.Module):
         h = self.act(h)
         h = self.conv2(h)
 
-        # AdaLN: time injection
-        time_scale, time_shift = self.time_mlp(t_embed).unsqueeze(-1).chunk(2, dim=1)
-        ctx_scale, ctx_shift = self.ctx_mlp(ctx.mean(1)).unsqueeze(-1).chunk(2, dim=1)
+        # FiLM modulation
+        time_scale, time_shift = self.time_film(t_embed).unsqueeze(-1).chunk(2, dim=1)
+        ctx_scale, ctx_shift = self.ctx_film(ctx_embed).unsqueeze(-1).chunk(2, dim=1)
 
         h = h * (time_scale + 1) + time_shift
         h = h * (ctx_scale + 1) + ctx_shift
@@ -64,7 +63,7 @@ class Conv1DBlock(nn.Module):
         return x + h  # Residual connection
 
 
-class VelocityGenerator(nn.Module):  # TODO: add better configuration / parameters (things like n_conv)
+class VelocityGenerator(nn.Module):
     def __init__(self, cfg: VLAConfig):
         super().__init__()
         self.cfg = cfg
@@ -79,72 +78,64 @@ class VelocityGenerator(nn.Module):  # TODO: add better configuration / paramete
             nn.Linear(d_model * 4, d_model)
         )
 
-        # 2. Input projection (Action chunk -> Latent channels)
-        # Conv1d expects (Batch, Channels, Length), so we will transpose the action chunk
+        # 2. Context projector for FiLM modulation
+        self.ctx_mlp = nn.Sequential(
+            nn.Linear(d_model, d_model * 2),
+            nn.GELU(approximate='tanh'),
+            nn.Linear(d_model * 2, d_model)
+        )
+
+        # 3. Input projection (Action chunk -> Latent channels)
         self.input_proj = nn.Conv1d(action_dim, d_model, kernel_size=3, padding=1)
 
-        # 3. Down-sampling / Feature Extraction (Fast 1D CNNs)
+        # 4. Fast temporal 1D Conv Blocks with FiLM conditioning
         self.down_blocks = nn.ModuleList([
             Conv1DBlock(d_model, d_model, d_model),
             Conv1DBlock(d_model, d_model, d_model)
         ])
-
-        # 4. The Semantic Bottleneck (The only expensive part)
-        # We project the QFormer context into the velocity space
-        self.context_proj = nn.Linear(d_model, d_model)
-        # A single transformer block? Maybe use multiple?
-        self.bottleneck = nn.ModuleList([TransformerBlock(d_model, 4, 2, dropout=cfg.dropout, is_cross=True) for _ in range(4)])
-        # self.bottleneck = TransformerBlock(d_model, 4, 2, dropout=cfg.dropout, is_cross=True)
-        # 5. Up-sampling / Decoding
+        self.mid_blocks = nn.ModuleList([
+            Conv1DBlock(d_model, d_model, d_model),
+            Conv1DBlock(d_model, d_model, d_model)
+        ])
         self.up_blocks = nn.ModuleList([
             Conv1DBlock(d_model, d_model, d_model),
             Conv1DBlock(d_model, d_model, d_model)
         ])
 
-        # 6. Output projection to Velocity Field
+        # 5. Output projection to Velocity Field
         self.output_proj = nn.Conv1d(d_model, action_dim, kernel_size=3, padding=1)
 
-    def forward(self, noisy_actions, t, context_tokens):
+    def forward(self, noisy_actions: torch.Tensor, t: torch.Tensor, context_tokens: torch.Tensor) -> torch.Tensor:
         """
         noisy_actions:  (B, seq_len, action_dim)
-        t:              (B, 1) - Flow matching time
-        context_tokens: (B, num_queries+1, d_model), concat the state token to the context tokens
+        t:              (B,) or (B, 1) - Flow matching time
+        context_tokens: (B, num_tokens, d_model)
         """
-        # Embed time
-        t_embed = self.time_mlp(t)  # (B, d_model)
-        ctx = self.context_proj(context_tokens)
+        if t.ndim > 1:
+            t = t.squeeze(-1)
+
+        # Embed time and pool context
+        t_embed = self.time_mlp(t)                             # (B, d_model)
+        ctx_embed = self.ctx_mlp(context_tokens.mean(dim=1))  # (B, d_model)
 
         # Transpose actions for Conv1D: (B, action_dim, seq_len)
         x = noisy_actions.transpose(1, 2)
         x = self.input_proj(x)
 
-        # Pass through Conv Blocks (Fast temporal feature extraction)
+        # Pass through Conv Blocks with FiLM
         for block in self.down_blocks:
-            x = block(x, t_embed, ctx)
-
-        # --- BOTTLENECK CROSS-ATTENTION ---
-        # Transpose back to sequence format for attention: (B, seq_len, d_model)
-        x_seq = x.transpose(1, 2)
-
-
-        # Action chunk queries the Context tokens
-        for encoder in self.bottleneck:
-            x_seq = encoder(x_seq, ctx, ctx)
-        # x_seq = self.bottleneck(x_seq, ctx, ctx)
-
-        # Transpose back for Conv1D: (B, d_model, seq_len)
-        x = x_seq.transpose(1, 2)
-        # ----------------------------------
-
-        # Pass through Up Blocks
+            x = block(x, t_embed, ctx_embed)
+        for block in self.mid_blocks:
+            x = block(x, t_embed, ctx_embed)
         for block in self.up_blocks:
-            x = block(x, t_embed, ctx)
+            x = block(x, t_embed, ctx_embed)
 
         # Output Velocity Field
         v_t = self.output_proj(x)
 
-        # Transpose back to original shape: (B, seq_len, action_dim)
+        # Transpose back: (B, seq_len, action_dim)
         return v_t.transpose(1, 2)
+
 
 class ActionExpert(nn.Module):
     def __init__(self, cfg: VLAConfig, return_traj=False):
@@ -157,7 +148,7 @@ class ActionExpert(nn.Module):
             self,
             actions: torch.Tensor,  # (B, C, action_dim) — ground truth
             reasoning: torch.Tensor,  # (B, n_queries, d_model)
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         B = actions.size(0)
 
         t = torch.rand(B, device=actions.device)
@@ -169,7 +160,6 @@ class ActionExpert(nn.Module):
         v_pred = self.vel(x_t, t, reasoning)
         return nn.functional.mse_loss(v_pred, target_v)
 
-
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
@@ -178,7 +168,7 @@ class ActionExpert(nn.Module):
     def sample(
             self,
             reasoning: torch.Tensor,
-    ) -> tuple:
+    ) -> tuple | torch.Tensor:
         B = reasoning.size(0)
         dt = 1.0 / self.cfg.flow_steps
         x_t = torch.randn(B, self.cfg.chunk_size, self.cfg.action_dim, device=reasoning.device)
@@ -201,5 +191,13 @@ class ActionExpert(nn.Module):
 if __name__ == '__main__':
     cfg = VLAConfig()
     ae = ActionExpert(cfg)
-    chunk = ae.sample(torch.randn(1, cfg.lq_size+1, cfg.d_model))
-    print(chunk, chunk.shape)
+    reasoning = torch.randn(2, cfg.lq_size + 1, cfg.d_model)
+    actions = torch.randn(2, cfg.chunk_size, cfg.action_dim)
+
+    loss_val = ae.loss(actions, reasoning)
+    sample_val = ae.sample(reasoning)
+
+    print(f"loss: {loss_val.item():.4f}")
+    print(f"sample shape : {sample_val.shape}")
+    assert sample_val.shape == (2, cfg.chunk_size, cfg.action_dim)
+    print("ActionExpert verification passed.")
