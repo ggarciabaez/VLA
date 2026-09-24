@@ -53,7 +53,7 @@ class VLA(nn.Module):
     def forward(self, img, txt, state):
         return self.act(img, txt, state)
 
-    def _get_encodings(self, img, txt, state, stream=True):
+    def _get_encodings(self, img, txt, state, stream=False):
         if stream:
             img_s = torch.cuda.Stream()
             txt_s = torch.cuda.Stream()
