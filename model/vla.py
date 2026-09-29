@@ -1,14 +1,14 @@
 # TODO: add documentation across the model
 # TODO: use direct parameter configuration instead of sending options through the call stack (see use_mask)
 from model.utils import VLAConfig
-from model.heads import TextEncoder, VisionEncoder
-from model.fusion import PerceiverResampler, QFormer
+from model.heads import TextEncoder, VisionEncoder, StateTokenizer
+from model.fusion import QFormer
 from model.action_expert import ActionExpert
 import torch
 from torch import nn
 
 class VLA(nn.Module):
-    def __init__(self, cfg: VLAConfig, use_mask=True):
+    def __init__(self, cfg: VLAConfig, use_mask=True, stream=False):
         super().__init__()
         self.cfg = cfg
         self.vision_encoder = VisionEncoder(cfg)
@@ -18,9 +18,11 @@ class VLA(nn.Module):
             nn.GELU(approximate='tanh'),
             nn.Linear(cfg.d_model, cfg.d_model),
         )
-        self.qformer = PerceiverResampler(cfg)
+        self.state_tokenizer = StateTokenizer(cfg.d_model)
+        self.qformer = QFormer(cfg)
         self.action_expert = ActionExpert(cfg)
         self.use_mask = use_mask
+        self.stream_enc = stream
 
     def encode(self, img: torch.Tensor, txt: torch.Tensor, state: torch.Tensor):
         """  TODO: add a text cache later
@@ -30,9 +32,12 @@ class VLA(nn.Module):
         :param use_mask: Whether to use the text mask for padding tokens
         :return: (B, lq_size, d_model) reasoning tokens (learned queries)
         """
-        img_enc, txt_enc, state_enc, txt_mask = self._get_encodings(img, txt, state)
-        return torch.cat([self.qformer.forward(img_enc, txt_enc, txt_mask if self.use_mask else None),
-                          state_enc.unsqueeze(1)], dim=1)
+        # TODO: might be worthwhile to pre-encode txt and images, and save them as such.
+        # No need for ~300M params that never get tuned.
+        img_enc, txt_enc, state_enc, ent_toks, txt_mask = self._get_encodings(img, txt, state)
+        q = self.qformer.forward(img_enc, txt_enc, txt_mask if self.use_mask else None)
+
+        return torch.cat([q, ent_toks, state_enc.unsqueeze(1)], dim=1)
 
     def loss(self, action, img, txt, state):
         reasoning = self.encode(img, txt, state)
@@ -53,8 +58,8 @@ class VLA(nn.Module):
     def forward(self, img, txt, state):
         return self.act(img, txt, state)
 
-    def _get_encodings(self, img, txt, state, stream=False):
-        if stream:
+    def _get_encodings(self, img, txt, state):
+        if self.stream_enc:
             img_s = torch.cuda.Stream()
             txt_s = torch.cuda.Stream()
 
@@ -63,18 +68,20 @@ class VLA(nn.Module):
             with torch.cuda.stream(txt_s):
                 txt_enc, txt_mask = self.text_encoder(txt)
             state_enc = self.state_encoder(state)
-
+            ent_toks = self.state_tokenizer(state)
             torch.cuda.current_stream().wait_stream(img_s)
             torch.cuda.current_stream().wait_stream(txt_s)
         else:
             img_enc = self.vision_encoder(img)
             txt_enc, txt_mask = self.text_encoder(txt)
             state_enc = self.state_encoder(state)
-        return img_enc, txt_enc, state_enc, txt_mask
+            ent_toks = self.state_tokenizer(state)
+        return img_enc, txt_enc, state_enc, ent_toks, txt_mask
 
     def loss_enc(self, action, img_enc, txt_enc, state_enc, txt_mask=None):
-        # For pre-encoded inputs!
-        reasoning = torch.cat([self.qformer.forward(img_enc, txt_enc, txt_mask), state_enc.unsqueeze(1)], dim=1)
+        # For pre-encoded inputs! TODO: maybe not a good idea to pass in state pre-encoded, and encode it here.
+        reasoning = torch.cat([self.qformer.forward(img_enc, txt_enc, txt_mask if self.use_mask else None),
+                               state_enc.unsqueeze(1)], dim=1)
         return self.action_expert.loss(action, reasoning)
 
 
@@ -93,22 +100,25 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # cfg = VLAConfig(siglip_model_id="google/siglip2-so400m-patch14-224")
     cfg = VLAConfig()
-    vla = VLA(cfg).to(device)
+    vla = VLA(cfg, stream=True).to(device)
     B = 3
     img, txt, state = vla.generate_dummy_inputs(B, device)
+    print(f"Device: {device}")
+    print(vla.encode(img, txt, state).shape)
+
     action = torch.randn(B, cfg.chunk_size, cfg.action_dim, device=device)
     total, trainable = print_model_counts(vla)
     print(f"Total params:     {total:,}")
     print(f"Trainable params: {trainable:,}")
     print(f"Frozen params:    {total - trainable:,}")
     print(f"Total flops:      {total * 2 * 1e-9:.2f} GFLOPs")
+    from tqdm import tqdm
     with torch.inference_mode():
         print(vla.loss(action, img, txt, state))
         import time
         s = time.perf_counter()
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            print(img.shape, txt.shape, state.shape)
-            for i in range(100):
+            for i in tqdm(range(100)):
                 out = vla.act(img, txt, state)
         print(f"Time: {100/(time.perf_counter() - s)}")
 

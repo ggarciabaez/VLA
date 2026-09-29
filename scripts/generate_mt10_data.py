@@ -185,5 +185,7 @@ if __name__ == "__main__":
             os.path.join(SAVE_DIR, "norm_stats.npz"),
             action_mean=all_actions.mean(0).astype(np.float32),
             action_std =all_actions.std(0) .astype(np.float32),
+            state_mean = all_states.mean(0).astype(np.float32),
+            state_std  = np.maximum(all_states.std(0), 1e-3).astype(np.float32)
         )
     print(all_actions.mean(0), all_actions.std(0))

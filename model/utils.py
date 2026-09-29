@@ -5,15 +5,16 @@ class VLAConfig:
     n_trainable: int = 0  # BLIP-2 actually uses frozen encoders!
     dropout: float = 0.15
 
-    d_model: int = 768
-    state_dim: int = 4
+    d_model: int = 1024
+    state_dim: int = 18
     action_dim: int = 4
 
     chunk_size: int = 16
     flow_steps: int = 10
 
     n_heads: int = 8
-    n_layers: int = 2
+    n_layers: int = 6
+    n_action_layers: int = 6
     lq_size: int = 64
 
     img_size: int = 224

@@ -2,7 +2,7 @@ import torch
 import math
 from torch import nn
 from model.utils import VLAConfig
-from model.mha_impl import TransformerBlock
+from model.mha_impl import MultiHeadAttention
 
 
 class SinusoidalTimeEmbedding(nn.Module):
@@ -18,6 +18,24 @@ class SinusoidalTimeEmbedding(nn.Module):
         )
         args = t[:, None] * freqs[None, :]
         return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
+
+
+class AdaLNBlock(nn.Module):
+    def __init__(self, d, n_heads, kv_div=2, dropout=0.0, is_cross=False, ffn_mult=4, r=256):
+        super().__init__()
+        self.n1 = nn.LayerNorm(d, elementwise_affine=False)
+        self.n2 = nn.LayerNorm(d, elementwise_affine=False)
+        self.attn = MultiHeadAttention(d, n_heads, kv_div, dropout, is_cross)
+        self.ffn = nn.Sequential(nn.Linear(d, d*ffn_mult), nn.GELU(approximate='tanh'), nn.Linear(d*ffn_mult, d))
+        self.mod = nn.Sequential(nn.SiLU(), nn.Linear(d, r), nn.SiLU(), nn.Linear(r, 6*d))
+        nn.init.zeros_(self.mod[-1].weight); nn.init.zeros_(self.mod[-1].bias)
+
+    def forward(self, x, cond, ctx=None):
+        s1, c1, g1, s2, c2, g2 = self.mod(cond).unsqueeze(1).chunk(6, -1)
+        h = self.n1(x) * (1 + c1) + s1
+        a = self.attn(h, ctx, ctx) if self.attn.is_cross else self.attn(h)
+        x = x + g1 * a
+        return x + g2 * self.ffn(self.n2(x) * (1 + c2) + s2)
 
 
 class VelocityGenerator(nn.Module):
@@ -47,17 +65,19 @@ class VelocityGenerator(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(num_layers):
             self.layers.append(nn.ModuleDict({
-                "self_attn": TransformerBlock(
-                    d_model, cfg.n_heads, 2, cfg.dropout, is_cross=False
+                "self_attn": AdaLNBlock(
+                    d_model, cfg.n_heads, is_cross=False
                 ),
-                "cross_attn": TransformerBlock(
-                    d_model, cfg.n_heads, 2, cfg.dropout, is_cross=True
+                "cross_attn": AdaLNBlock(
+                    d_model, cfg.n_heads, is_cross=True
                 )
             }))
 
         # 5. Output velocity mapping
         self.norm_out = nn.LayerNorm(d_model)
         self.output_proj = nn.Linear(d_model, action_dim)
+        self.ctx_norm = nn.LayerNorm(d_model)
+        self.cond_proj = nn.Linear(2*d_model, d_model)
 
         # Zero-initialize the final output to maintain an identity start
         nn.init.zeros_(self.output_proj.weight)
@@ -69,16 +89,14 @@ class VelocityGenerator(nn.Module):
         if t.ndim > 1:
             t = t.squeeze(-1)
 
-        t_embed = self.time_mlp(t).unsqueeze(1)  # (B, 1, d_model)
-
-        # Base token features: Actions + Time + Sequence Position
-        x = self.action_proj(noisy_actions) + t_embed + self.pos_emb[:, :seq_len, :]
-
+        ctx = self.ctx_norm(context_tokens)
+        pooled = torch.cat([ctx[:, -1], ctx[:, :self.cfg.lq_size].mean(1)], -1)
+        cond = self.time_mlp(t) + self.cond_proj(pooled)
+        x = self.action_proj(noisy_actions) + self.pos_emb[:, :seq_len]
         # Iterate through DiT-style alternating attention cascades
         for layer in self.layers:
-            x = layer["self_attn"](x)
-            # Action tokens actively query unpooled multi-modal reasoning tokens
-            x = layer["cross_attn"](x, key=context_tokens, value=context_tokens)
+            x = layer["self_attn"](x, cond)
+            x = layer["cross_attn"](x, cond, ctx)
 
         x = self.norm_out(x)
         return self.output_proj(x)

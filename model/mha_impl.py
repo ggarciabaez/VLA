@@ -1,5 +1,7 @@
 from torch import nn, Tensor, split
-from torch.nn.functional import scaled_dot_product_attention
+from torch.nn.functional import scaled_dot_product_attention, silu
+
+
 
 
 class MultiHeadAttention(nn.Module):
@@ -79,13 +81,11 @@ class TransformerBlock(nn.Module):
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x: Tensor, key: Tensor = None, value: Tensor = None, attn_mask: Tensor = None) -> Tensor:
-        # Pre-LN pattern
-        # Reminder that the encoder is the smaller structure on the left of the illustration, NOT the bigger decoder
-        x = self.norm1(x)
-        if self.attn.is_cross:  # doesn't really make sense if the model
-            attn = self.attn(x, key, value, attn_mask)
+        h = self.norm1(x)
+        if self.attn.is_cross:
+            attn = self.attn(h, key, value, attn_mask)
         else:
-            attn = self.attn(x, attn_mask=attn_mask)
+            attn = self.attn(h, attn_mask=attn_mask)
         x = x + self.drop(attn)
         x = x + self.ffn(self.norm2(x))
         return x

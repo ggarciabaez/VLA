@@ -21,7 +21,7 @@ if 1:
         checkpoint   = "../checkpoints/mt10/best.pt",
 
         # task
-        env_name     = "push-v3",
+        env_name     = "window-open-v3",
         prompt       = "",
         seed         = 37,
 
@@ -177,7 +177,7 @@ def run_task(model, tok_t, CFG):
         if done:
             break
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-            img_t, state_t = process_inputs(img, obs)
+            img_t, state_t = process_inputs([img, gripimg], obs)
             chunk = model.act(img_t, tok_t, state_t)
             actions = process_chunk(chunk)
 

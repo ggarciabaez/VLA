@@ -268,6 +268,8 @@ class ContinuousDataset:
         with np.load(stats_file) as s:
             action_mean = s["action_mean"].astype(np.float32)
             action_std = s["action_std"].astype(np.float32)
+            # state_mean = s["state_mean"].astype(np.float32)
+            # state_std = s["state_std"].astype(np.float32)
 
         # ── First pass: read each shard's own length (it now varies) ───────────
         shard_meta: list[tuple[Path, int]] = []
@@ -315,6 +317,8 @@ class ContinuousDataset:
         # ── Normalize actions in-place ────────────────────────────────────────
         actions -= action_mean
         actions /= action_std
+        # states -= state_mean
+        # states /= state_std
 
         self.images = torch.from_numpy(images)
         self.states = torch.from_numpy(states)

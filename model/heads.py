@@ -3,7 +3,8 @@ from torch import nn
 import torch
 from torch.functional import F
 from model.utils import VLAConfig, freeze_except_last_n_layers  # covered here
-
+from transformers import logging
+logging.set_verbosity_error()
 class VisionEncoder(nn.Module):
     def __init__(self, cfg: VLAConfig):
         super(VisionEncoder, self).__init__()
@@ -75,6 +76,15 @@ class TextEncoder(nn.Module):
         :return: Text embeddings of dimension d_model, as well as the padding mask. The padding mask is False for padding tokens.
         """
         return self.proj(self.backbone(tokens).last_hidden_state), ~torch.isin(tokens, self.special_ids.to(tokens.device))
+
+class StateTokenizer(nn.Module):
+    SL = [(0, 4), (4, 11), (11, 18)]  # hand+gripper, obj1, obj2
+    def __init__(self, d):
+        super().__init__()
+        self.projs = nn.ModuleList([nn.Sequential(nn.Linear(b-a, d), nn.GELU(approximate='tanh'), nn.Linear(d, d)) for a, b in self.SL])
+        self.type_emb = nn.Parameter(torch.zeros(len(self.SL), d)); nn.init.trunc_normal_(self.type_emb, std=0.02)
+    def forward(self, s):
+        return torch.stack([p(s[:, a:b]) for p, (a, b) in zip(self.projs, self.SL)], 1) + self.type_emb
 
 if __name__ == '__main__':
     # test the model
