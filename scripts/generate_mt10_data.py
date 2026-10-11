@@ -151,9 +151,9 @@ if __name__ == "__main__":
 
         for step in tqdm(range(MAX_STEPS)):
             actions = agent.get_action(obs)
-            obs, _reward, terminated, truncated, _info = env.step(actions)
             imgs = np.array(env.render())[..., ::-1]  # BGR to RGB
             writer.add_step(imgs, obs, actions)
+            obs, _reward, terminated, truncated, _info = env.step(actions)
             if np.all(_info["success"]):
                 n_eps += 1
                 print(f"All tasks succeeded at {step+1} steps")

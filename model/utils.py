@@ -3,9 +3,9 @@ from dataclasses import dataclass, field
 class VLAConfig:
     siglip_model_id: str = "google/siglip2-base-patch16-224"
     n_trainable: int = 0  # BLIP-2 actually uses frozen encoders!
-    dropout: float = 0.15
+    dropout: float = 0.1
 
-    d_model: int = 1024
+    d_model: int = 768
     state_dim: int = 18
     action_dim: int = 4
 
@@ -22,6 +22,9 @@ class VLAConfig:
     # normalization stats, make sure to catch these before training
     action_mean: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
     action_std: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
+    state_mean: list[float] = field(default_factory=lambda: [1.0] * 18)
+    state_std: list[float] = field(default_factory=lambda: [1.0] * 18)
+
 
 def freeze_except_last_n_layers(model, n_unfrozen_layers, model_type="vision"):
     """

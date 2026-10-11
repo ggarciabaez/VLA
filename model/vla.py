@@ -36,8 +36,13 @@ class VLA(nn.Module):
         # No need for ~300M params that never get tuned.
         img_enc, txt_enc, state_enc, ent_toks, txt_mask = self._get_encodings(img, txt, state)
         q = self.qformer.forward(img_enc, txt_enc, txt_mask if self.use_mask else None)
-
         return torch.cat([q, ent_toks, state_enc.unsqueeze(1)], dim=1)
+
+    def loss_preenc(self, action, img, txt, state, txt_mask=None):
+        state_enc = self.state_encoder(state)
+        ent_toks = self.state_tokenizer(state)
+        q = self.qformer.forward(img, txt, txt_mask if self.use_mask else None)
+        self.action_expert.loss(action, torch.cat([q, ent_toks, state_enc.unsqueeze(1)], dim=1))
 
     def loss(self, action, img, txt, state):
         reasoning = self.encode(img, txt, state)

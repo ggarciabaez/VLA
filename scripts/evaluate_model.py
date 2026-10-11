@@ -21,9 +21,9 @@ if 1:
         checkpoint   = "../checkpoints/mt10/best.pt",
 
         # task
-        env_name     = "window-open-v3",
+        env_name     = "push-v3",
         prompt       = "",
-        seed         = 37,
+        seed         = 42,
 
         # visualization
         action_labels = ["x", "y", "z", "gripper"],
@@ -60,8 +60,6 @@ def process_chunk(chunk, idx=None):
         return chunk
     return [chunk[idx]]
 
-# action_mean = torch.tensor([-0.02170256,  0.841916,    0.36787212,  0.49599922], device=device)
-# action_std = torch.tensor([0.21761712, 1.417548,   2.2964888,  0.3944419 ], device=device)
 # ── Model ─────────────────────────────────────────────────────────────────────
 train_state = torch.load(CFG["checkpoint"], weights_only=False, map_location=torch.device("cpu"))
 cfg: VLAConfig = train_state["config"]
@@ -70,7 +68,7 @@ action_mean, action_std = torch.tensor(cfg.action_mean, device=device), torch.te
 model_weights = train_state["model"]
 
 model     = VLA(cfg)
-# model.action_expert.cfg.flow_steps = 10
+model.action_expert.cfg.flow_steps = 30
 missing, unexpected = model.load_state_dict(model_weights, strict=True)
 assert not missing and not unexpected, f"State dict mismatch!\n  missing={missing}\n  unexpected={unexpected}"
 print(f"Loaded checkpoint — epoch {train_state.get('epoch', '?')}  "
@@ -177,7 +175,7 @@ def run_task(model, tok_t, CFG):
         if done:
             break
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-            img_t, state_t = process_inputs([img, gripimg], obs)
+            img_t, state_t = process_inputs(img, obs)
             chunk = model.act(img_t, tok_t, state_t)
             actions = process_chunk(chunk)
 
@@ -189,7 +187,7 @@ def run_task(model, tok_t, CFG):
         plt.draw()
         plt.pause(0.00001)
 
-        for action in actions[:]:
+        for action in actions[:2]:
             obs, reward, terminated, truncated, info = env.step(action)
             gripenv.step(action)
 
@@ -206,6 +204,5 @@ def run_task(model, tok_t, CFG):
 with torch.inference_mode():
     img, txt, state = model.generate_dummy_inputs(3, device)
     r = model.encode(img, txt, state)
-    print(torch.nn.functional.cosine_similarity(r[0].flatten(1), r[2].flatten(1)))
 run_task(model, tok_t, CFG)
 # plot_chunk(model, tok_t, CFG)

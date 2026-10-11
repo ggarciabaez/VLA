@@ -61,7 +61,7 @@ class TextEncoder(nn.Module):
         # TODO: could be a good idea to just always have a projection for a new embedding space
         if cfg.d_model <= 0:
             cfg.d_model = self.hidden_size
-        self.proj = nn.Linear(self.hidden_size, cfg.d_model) #if cfg.d_model != self.hidden_size else nn.Identity()
+        self.proj = nn.Linear(self.hidden_size, cfg.d_model) if cfg.d_model != self.hidden_size else nn.Identity()
         self.backbone = freeze_except_last_n_layers(self.backbone, cfg.n_trainable, model_type="text")
 
         self._tokenizer = AutoTokenizer.from_pretrained(cfg.siglip_model_id)
@@ -101,7 +101,7 @@ if __name__ == '__main__':
     cfg = VLAConfig(siglip_model_id="google/siglip2-so400m-patch14-224")
     encoder = VisionEncoder(cfg)
     out = encoder.forward(
-        frame
+        frames
     )
     print(out.shape)
     txt = TextEncoder(cfg)
