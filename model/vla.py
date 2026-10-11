@@ -42,7 +42,7 @@ class VLA(nn.Module):
         state_enc = self.state_encoder(state)
         ent_toks = self.state_tokenizer(state)
         q = self.qformer.forward(img, txt, txt_mask if self.use_mask else None)
-        self.action_expert.loss(action, torch.cat([q, ent_toks, state_enc.unsqueeze(1)], dim=1))
+        return self.action_expert.loss(action, torch.cat([q, ent_toks, state_enc.unsqueeze(1)], dim=1))
 
     def loss(self, action, img, txt, state):
         reasoning = self.encode(img, txt, state)
