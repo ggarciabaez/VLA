@@ -172,11 +172,16 @@ class Monitor:
         self.m, self.P, self.pair, self.abort_norm = model, probe, pair, abort_norm
         self.qn, self.tn, self.sc = {}, {}, {}
         for i, L in enumerate(model.qformer.layers):
-            L.register_forward_hook(lambda mod, a, o, i=i: (
-                self.qn.__setitem__(i, o[0].detach().float().norm(dim=-1).mean()),
-                self.tn.__setitem__(i, o[1].detach().float().norm(dim=-1).mean())))
-            L.txt_film.register_forward_hook(lambda mod, a, o, i=i:
-                self.sc.__setitem__(i, o.detach().float().chunk(2, -1)[1].abs().mean()))
+            def layer_hook(mod, args, out, i=i):
+                self.qn[i] = out[0].detach().float().norm(dim=-1).mean()
+                self.tn[i] = out[1].detach().float().norm(dim=-1).mean()
+                # returns None, so the module output is untouched
+
+            def film_hook(mod, args, out, i=i):
+                self.sc[i] = out.detach().float().chunk(2, -1)[1].abs().mean()
+
+            L.register_forward_hook(layer_hook)
+            L.txt_film.register_forward_hook(film_hook)
 
     def pre_clip(self, step, every=25):          # after backward, BEFORE clip_grad_norm_
         if step != 0 and step % every: return
@@ -189,8 +194,10 @@ class Monitor:
             d[f"grad/txt_film_L{i}"] = _gn(L.txt_film.parameters())
         d = {k: v.item() for k, v in d.items()}
         if step == 0:
+            assert d["grad/expert"] > 0, "expert has no gradient at step 0"  # only output_proj, by design
+        if step == 100:  # after the zero-init chain unlocks
             dead = [k for k, v in d.items() if ("txt_film" in k or "txt_lin" in k) and v == 0.0]
-            assert not dead, f"zero grads at step 0: {dead}"
+            assert not dead, f"text path still has zero grads at step 100: {dead}"
         wandb.log(d, step=step)
 
     def post_step(self, step, total_gn, every=25):   # after opt.step(); total_gn = clip_grad_norm_ return

@@ -42,12 +42,15 @@ class VLA(nn.Module):
         t = self.txt_lin(self.txt_ln(txt))
         return torch.cat([q, t, ent_toks, state_enc.unsqueeze(1)], dim=1)
 
-    def loss_preenc(self, action, img, txt, state, txt_mask=None):
+    def context_preenc(self, img, txt, state, txt_mask=None):
         state_enc = self.state_encoder(state)
         ent_toks = self.state_tokenizer(state)
         q = self.qformer.forward(img, txt, txt_mask if self.use_mask else None)
         t = self.txt_lin(self.txt_ln(txt))
-        return self.action_expert.loss(action, torch.cat([q, t, ent_toks, state_enc.unsqueeze(1)], dim=1))
+        return torch.cat([q, t, ent_toks, state_enc.unsqueeze(1)], dim=1)
+
+    def loss_preenc(self, action, img, txt, state, txt_mask=None):
+        return self.action_expert.loss(action, self.context_preenc(img, txt, state, txt_mask))
 
     def loss(self, action, img, txt, state):
         reasoning = self.encode(img, txt, state)
