@@ -1,0 +1,63 @@
+{
+  "checkpoint": "/home/ggdev/PycharmProjects/VLA/checkpoints/best_xyz.pt",
+  "seed": 9160,
+  "episodes_per_task": 20,
+  "episode_horizon": 200,
+  "tasks": {
+    "reach-v3": {
+      "successes": 18,
+      "episodes": 20,
+      "success_rate": 0.9
+    },
+    "push-v3": {
+      "successes": 18,
+      "episodes": 20,
+      "success_rate": 0.9
+    },
+    "pick-place-v3": {
+      "successes": 9,
+      "episodes": 20,
+      "success_rate": 0.45
+    },
+    "door-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "drawer-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "drawer-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "button-press-topdown-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "peg-insert-side-v3": {
+      "successes": 6,
+      "episodes": 20,
+      "success_rate": 0.3
+    },
+    "window-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "window-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    }
+  },
+  "overall": {
+    "successes": 171,
+    "episodes": 200,
+    "success_rate": 0.855
+  }
+}

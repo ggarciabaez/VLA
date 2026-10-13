@@ -78,7 +78,7 @@ class TextEncoder(nn.Module):
         return self.proj(self.backbone(tokens).last_hidden_state), ~torch.isin(tokens, self.special_ids.to(tokens.device))
 
 class StateTokenizer(nn.Module):
-    SL = [(0, 4), (4, 11), (11, 18)]  # hand+gripper, obj1, obj2
+    SL = [(0, 4), (4, 11), (11, 18), (18, 21)]  # hand+gripper, obj1, obj2, goal
     def __init__(self, d):
         super().__init__()
         self.projs = nn.ModuleList([nn.Sequential(nn.Linear(b-a, d), nn.GELU(approximate='tanh'), nn.Linear(d, d)) for a, b in self.SL])
@@ -111,3 +111,5 @@ if __name__ == '__main__':
     print(tokens.size())
     enc, mask = txt.forward(tokens)
     print(enc.size(), mask)
+    torch.save(enc, "test.pt")
+    torch.save(mask, "test_mask.pt")

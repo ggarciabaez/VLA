@@ -9,9 +9,18 @@ class QFormerLayer(nn.Module):
         self.self_attn = TransformerBlock(cfg.d_model, cfg.n_heads, 2, dropout=cfg.dropout)
         self.cross_attn = TransformerBlock(cfg.d_model, cfg.n_heads, 2, dropout=cfg.dropout, is_cross=True)
 
+        self.txt_norm = nn.LayerNorm(cfg.d_model, elementwise_affine=False)
+        self.q_norm   = nn.LayerNorm(cfg.d_model, elementwise_affine=False)
         self.txt_film = nn.Linear(cfg.d_model, cfg.d_model * 2)
         nn.init.zeros_(self.txt_film.weight)
         nn.init.zeros_(self.txt_film.bias)
+
+    def masked_mean(self, t, mask=None):
+        if mask is not None:
+            m = mask.reshape(mask.shape[0], -1)[:, -t.shape[1]:].unsqueeze(-1).to(t.dtype)
+            return (t*m).sum(1, keepdim=True) / m.sum(1, keepdim=True).clamp(min=1)
+        else:
+            return t.mean(1, keepdim=True)
 
     def forward(self, lq, txt, img, mask=None):
         # 1. Self attend the text and query tokens. Tokens are allowed to fully attend each other (no mask)
@@ -21,13 +30,9 @@ class QFormerLayer(nn.Module):
         t = qt[:, lq.shape[1]:, :]
 
         # Stamp text into queries BEFORE image cross-attention can overwrite it
-        if mask is not None:
-            m = mask.reshape(mask.shape[0], -1)[:, -t.shape[1]:].unsqueeze(-1).to(t.dtype)
-            txt_pooled = (t*m).sum(1, keepdim=True) / m.sum(1, keepdim=True).clamp(min=1)
-        else:
-            txt_pooled = t.mean(1, keepdim=True)
-        scale, shift = self.txt_film(txt_pooled).chunk(2, dim=-1)
-        q = q * (scale + 1) + shift
+        txt_pooled = self.masked_mean(self.txt_norm(t), mask)
+        shift, scale = self.txt_film(txt_pooled).chunk(2, -1)
+        q = q + self.q_norm(q) * scale + shift
 
         q = self.cross_attn(q, img, img)
         return q, t

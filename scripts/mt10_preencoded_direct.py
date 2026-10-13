@@ -164,7 +164,7 @@ class VLAEmbedWriter:
         self._chunk_list.append(np.array(self._idxq, dtype=np.int64))
         self._step += 1
 
-    def end_episode(self):
+    def end_episode(self, end_points = None):
         T = self._step
         if T == 0:
             return
@@ -179,6 +179,7 @@ class VLAEmbedWriter:
         self.state_stats.update(states)
         self.action_stats.update(actions)
 
+
         # Drop the per-step list references before handing the stacked episode to
         # the saver. The arrays remain alive while the background job needs them.
         del self._images_list, self._states_list, self._actions_list, self._chunk_list
@@ -190,6 +191,8 @@ class VLAEmbedWriter:
             "chunk_indices": chunk_idxs,
             "task_names": np.asarray(self.task_names, dtype=np.str_),
         }
+        if end_points is not None:
+            episode_data["end_points"] = end_points
         path = os.path.join(self.save_dir, f"ep{self.episode_count:04d}.npz")
         print(f"[ep {self.episode_count:04d}] {T} steps × {len(self.task_names)} tasks "
               f"→ writing one episode file: {os.path.basename(path)}")
@@ -199,15 +202,24 @@ class VLAEmbedWriter:
     def save_norm_stats(self):
         action_mean, action_std = self.action_stats.mean_std()
         state_mean, state_std = self.state_stats.mean_std()
+
+        # Dims that are constant in the dataset (e.g. the unused 2nd-object slot):
+        # identity transform, so an unexpected nonzero value at eval can't blow up.
+        dead = state_std < 1e-6
+        state_mean = np.where(dead, 0.0, state_mean)
+        state_std = np.where(dead, 1.0, np.maximum(state_std, 1e-2))
+        action_std = np.maximum(action_std, 1e-2)
+
         stats_path = os.path.join(self.save_dir, "norm_stats.npz")
         np.savez_compressed(
             stats_path,
-            action_mean=action_mean,
-            action_std=action_std,
-            state_mean=state_mean,
-            state_std=np.maximum(state_std, 1e-3).astype(np.float32),
+            action_mean=action_mean.astype(np.float32),
+            action_std=action_std.astype(np.float32),
+            state_mean=state_mean.astype(np.float32),
+            state_std=state_std.astype(np.float32),
         )
         print(f"Saved normalization stats to {stats_path}")
+        print("dead state dims:", np.where(dead)[0])
         print("action mean:", action_mean, "action std:", action_std)
         print("state mean:", state_mean, "state std:", np.maximum(state_std, 1e-3))
 
@@ -242,7 +254,7 @@ def encode_text(prompt_path, device):
     }
 
 
-SAVE_DIR = "../data/dataset_shards/mt10_grip"
+SAVE_DIR = "../data/dataset_shards/mt10_grip_plus"
 EPISODES = 20
 MAX_STEPS = 200
 SEED = 37
@@ -277,22 +289,26 @@ def main():
             seed += 1
             obs, _info = env.reset(seed=seed)
             writer.start_episode()
-
+            success_state = np.zeros(len(policy_names), dtype=np.uint8)
             for step in tqdm(range(MAX_STEPS)):
-                actions = agent.get_action(obs)
+                actions = np.clip(agent.get_action(obs), -1, 1)
                 imgs = np.asarray(env.render())[..., ::-1]  # BGR to RGB
                 with torch.inference_mode():
                     imgs = torch.from_numpy(imgs.copy()).permute(0, 3, 1, 2).to(device)
                     embeds = encoder(imgs).cpu().numpy()
 
-                obs = obs[..., :18]
+                obs = np.hstack([obs[..., :18], obs[..., 36:]])
                 writer.add_step(embeds, obs, actions)
                 obs, _reward, terminated, truncated, _info = env.step(actions)
-
-                if np.all(_info["success"]):
+                completion = np.logical_or(success_state, _info["success"])
+                for i in range(len(policy_names)):
+                    if completion[i] and not success_state[i]:
+                        success_state[i] = step
+                if not np.any(success_state == 0):
                     n_eps += 1
                     print(f"All tasks succeeded at {step + 1} steps")
-                    writer.end_episode()
+                    print(success_state)
+                    writer.end_episode(success_state)
                     break
             else:
                 n_success = len(np.where(_info["success"])[0])

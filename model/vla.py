@@ -21,6 +21,9 @@ class VLA(nn.Module):
         self.state_tokenizer = StateTokenizer(cfg.d_model)
         self.qformer = QFormer(cfg)
         self.action_expert = ActionExpert(cfg)
+        self.txt_ln = nn.LayerNorm(cfg.d_model)
+        self.txt_lin = nn.Linear(cfg.d_model, cfg.d_model)
+
         self.use_mask = use_mask
         self.stream_enc = stream
 
@@ -36,13 +39,15 @@ class VLA(nn.Module):
         # No need for ~300M params that never get tuned.
         img_enc, txt_enc, state_enc, ent_toks, txt_mask = self._get_encodings(img, txt, state)
         q = self.qformer.forward(img_enc, txt_enc, txt_mask if self.use_mask else None)
-        return torch.cat([q, ent_toks, state_enc.unsqueeze(1)], dim=1)
+        t = self.txt_lin(self.txt_ln(txt))
+        return torch.cat([q, t, ent_toks, state_enc.unsqueeze(1)], dim=1)
 
     def loss_preenc(self, action, img, txt, state, txt_mask=None):
         state_enc = self.state_encoder(state)
         ent_toks = self.state_tokenizer(state)
         q = self.qformer.forward(img, txt, txt_mask if self.use_mask else None)
-        return self.action_expert.loss(action, torch.cat([q, ent_toks, state_enc.unsqueeze(1)], dim=1))
+        t = self.txt_lin(self.txt_ln(txt))
+        return self.action_expert.loss(action, torch.cat([q, t, ent_toks, state_enc.unsqueeze(1)], dim=1))
 
     def loss(self, action, img, txt, state):
         reasoning = self.encode(img, txt, state)
@@ -82,12 +87,6 @@ class VLA(nn.Module):
             state_enc = self.state_encoder(state)
             ent_toks = self.state_tokenizer(state)
         return img_enc, txt_enc, state_enc, ent_toks, txt_mask
-
-    def loss_enc(self, action, img_enc, txt_enc, state_enc, txt_mask=None):
-        # For pre-encoded inputs! TODO: maybe not a good idea to pass in state pre-encoded, and encode it here.
-        reasoning = torch.cat([self.qformer.forward(img_enc, txt_enc, txt_mask if self.use_mask else None),
-                               state_enc.unsqueeze(1)], dim=1)
-        return self.action_expert.loss(action, reasoning)
 
 
 def print_model_counts(model):
