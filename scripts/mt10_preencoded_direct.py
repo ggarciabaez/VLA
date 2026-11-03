@@ -10,7 +10,7 @@ from itertools import chain
 import gymnasium as gym
 import numpy as np
 import torch
-from metaworld import policies, MT10
+from metaworld import policies, MT10, MT50
 from tqdm import tqdm
 
 
@@ -254,19 +254,23 @@ def encode_text(prompt_path, device):
     }
 
 
-SAVE_DIR = "../data/dataset_shards/mt10_grip_plus"
+SAVE_DIR = "../data/dataset_shards/mt50_grip_plus"
 EPISODES = 20
 MAX_STEPS = 200
-SEED = 37
+SEED = 9160
+MT = MT50
 
-
+# TODO: we shouldn't throw away everything just because some tasks failed.
 def main():
     os.makedirs(SAVE_DIR, exist_ok=True)
-    policy_names = tuple(MT10().train_classes.keys())
+    policy_names = tuple(MT().train_classes.keys())
     agent_classes = [policies.ENV_POLICY_MAP[name] for name in policy_names]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     encoded_prompts = encode_text(os.path.join(SAVE_DIR, "task_prompts.json"), device)
-
+    np.savez_compressed(
+        os.path.join(SAVE_DIR, "text_embeds.npz"),
+        prompts=encoded_prompts,
+    )
     env = gym.make_vec(
         "Meta-World/custom-mt-envs",
         vector_strategy="async",

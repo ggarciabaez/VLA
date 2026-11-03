@@ -6,7 +6,7 @@ class VLAConfig:
     dropout: float = 0.1
 
     d_model: int = 768
-    state_dim: int = 18
+    state_dim: int = 21
     action_dim: int = 4
 
     chunk_size: int = 16
@@ -22,8 +22,8 @@ class VLAConfig:
     # normalization stats, make sure to catch these before training
     action_mean: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
     action_std: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0, 1.0])
-    state_mean: list[float] = field(default_factory=lambda: [1.0] * 18)
-    state_std: list[float] = field(default_factory=lambda: [1.0] * 18)
+    state_mean: list[float] = field(default_factory=lambda: [1.0] * 21)
+    state_std: list[float] = field(default_factory=lambda: [1.0] * 21)
 
 
 def freeze_except_last_n_layers(model, n_unfrozen_layers, model_type="vision"):

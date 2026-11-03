@@ -39,7 +39,7 @@ class VLA(nn.Module):
         # No need for ~300M params that never get tuned.
         img_enc, txt_enc, state_enc, ent_toks, txt_mask = self._get_encodings(img, txt, state)
         q = self.qformer.forward(img_enc, txt_enc, txt_mask if self.use_mask else None)
-        t = self.txt_lin(self.txt_ln(txt))
+        t = self.txt_lin(self.txt_ln(txt_enc))
         return torch.cat([q, t, ent_toks, state_enc.unsqueeze(1)], dim=1)
 
     def context_preenc(self, img, txt, state, txt_mask=None):

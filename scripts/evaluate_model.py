@@ -24,18 +24,18 @@ tasklist = ('reach-v3', 'push-v3', 'pick-place-v3', 'door-open-v3', 'drawer-open
 if 1:
     CFG = dict(
         # paths
-        checkpoint   = "../checkpoints/best_xyz.pt",
+        checkpoint   = "../checkpoints/mt50/latest.pt",
 
         # task
-        env_name     = tasklist[2],
+        env_name     = "basketball-v3",
         prompt       = "",
-        seed         = 9160,
+        seed         = 37,
 
         # visualization
         action_labels = ["x", "y", "z", "gripper"],
         # match training camera convention from generate_mt50_data.py
         policy_camera = "gripperPOV",
-        convert_color = True,
+        convert_color = False,
         multicam     = False,
         n_actions    = -1,
         plot = False
@@ -86,7 +86,7 @@ state_mean, state_std = torch.tensor(cfg.state_mean, device=device), torch.tenso
 model_weights = train_state["model"]
 
 model     = VLA(cfg, stream=True)
-# model.action_expert.cfg.flow_steps = 10
+model.action_expert.cfg.flow_steps = 1
 missing, unexpected = model.load_state_dict(model_weights, strict=True)
 assert not missing and not unexpected, f"State dict mismatch!\n  missing={missing}\n  unexpected={unexpected}"
 print(f"Loaded checkpoint — epoch {train_state.get('epoch', '?')}  "
@@ -98,71 +98,6 @@ print("Prompt:", CFG["prompt"])
 tok_t   = model.text_encoder.tokenize(
     CFG["prompt"],
 ).to(device)
-
-
-# ── Visualization ─────────────────────────────────────────────────────────────
-def plot_chunk(model, tok_t, CFG):
-    env = gym.make(
-        "Meta-World/MT1",
-        env_name=CFG["env_name"],
-        seed=CFG["seed"],
-        render_mode="rgb_array",
-        camera_name="corner"
-    )
-
-    gripenv = gym.make(
-        "Meta-World/MT1",
-        env_name=CFG["env_name"],
-        seed=CFG["seed"],
-        render_mode="rgb_array",
-        camera_name="gripperPOV"
-    )
-    obs, _info = env.reset(seed=CFG["seed"])
-    gripenv.reset(seed=CFG["seed"])
-    img = np.array(env.render())  # (H, W, 3) uint8
-    gripimg = np.array(gripenv.render())
-    model.action_expert.return_traj = True
-    with torch.inference_mode():
-        img_t, state_t = process_inputs([img], obs)
-        chunk, trajectory = model.act(img_t, tok_t, state_t)
-
-    chunk = denormalize(chunk).squeeze(0).cpu().numpy()
-    labels = CFG["action_labels"]
-    steps  = len(trajectory)
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 4))
-    fig.suptitle(f'VLA — "{CFG["prompt"]}"')
-
-    # Left: final predicted chunk (one line per action dim)
-    ax = axes[0]
-    for d, label in enumerate(labels):
-        ax.plot(chunk[:, d], label=label)
-    ax.set_title("Predicted action chunk")
-    ax.set_xlabel("Step in chunk")
-    ax.set_ylabel("Action value")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    # Right: denoising trajectory for the first action dim — shows flow matching working
-    ax = axes[1]
-    traj_np = np.stack([
-        denormalize(s).squeeze(0).cpu().numpy()
-        for s in trajectory
-    ])  # (flow_steps, chunk_size, action_dim)
-
-    for d, label in enumerate(labels):
-        for t in range(steps):
-            alpha = 0.15 + 0.85 * (t / max(steps - 1, 1))
-            ax.plot(traj_np[t, :, d], color=f"C{d}", alpha=alpha,
-                    label=label if t == steps - 1 else None)
-    ax.set_title("Flow matching trajectory (light→dark = noise→action)")
-    ax.set_xlabel("Step in chunk")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    # plt.savefig("eval_output.png", dpi=150)
-    plt.show()
 
 def run_task(model, tok_t, CFG):
     fig, ax = plt.subplots()
@@ -228,7 +163,3 @@ with torch.inference_mode():
     img, txt, state = model.generate_dummy_inputs(3, device)
     r = model.encode(img, txt, state)
 run_task(model, tok_t, CFG)
-# plot_chunk(model, tok_t, CFG)
-# TODO: We can save on storage size by directly storing by action chunks.
-# We can take 1 image, 1 state, and 16 (for example) actions.
-# That way we save a lot of space, and learn better what chunks look like
