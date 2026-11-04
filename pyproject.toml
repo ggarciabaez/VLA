@@ -26,4 +26,7 @@ dependencies = [
     "transformers>=5.5.4",
     "wandb>=0.30.0",
     "fast-flights>=3.1.0",
+    "onnxsim>=0.7.3",
+    "nvidia-modelopt[onnx]>=0.48.0",
+    "tensorrt-rtx>=1.7.1.116",
 ]

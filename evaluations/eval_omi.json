@@ -1,0 +1,318 @@
+{
+  "checkpoint": "/home/ggdev/PycharmProjects/VLA/checkpoints/mt50/best.pt",
+  "seed": 9160,
+  "episodes_per_task": 20,
+  "episode_horizon": 200,
+  "camera": "gripperPOV",
+  "prompt_index": 0,
+  "flow_steps": 10,
+  "num_tasks": 50,
+  "tasks": {
+    "assembly-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 89.0
+    },
+    "basketball-v3": {
+      "successes": 16,
+      "episodes": 20,
+      "success_rate": 0.8,
+      "mean_steps_to_success": 106.5
+    },
+    "bin-picking-v3": {
+      "successes": 19,
+      "episodes": 20,
+      "success_rate": 0.95,
+      "mean_steps_to_success": 117.0
+    },
+    "box-close-v3": {
+      "successes": 16,
+      "episodes": 20,
+      "success_rate": 0.8,
+      "mean_steps_to_success": 106.25
+    },
+    "button-press-topdown-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 64.5
+    },
+    "button-press-topdown-wall-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 57.4
+    },
+    "button-press-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 61.7
+    },
+    "button-press-wall-v3": {
+      "successes": 19,
+      "episodes": 20,
+      "success_rate": 0.95,
+      "mean_steps_to_success": 63.36842105263158
+    },
+    "coffee-button-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 37.3
+    },
+    "coffee-pull-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 83.85
+    },
+    "coffee-push-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 53.75
+    },
+    "dial-turn-v3": {
+      "successes": 4,
+      "episodes": 20,
+      "success_rate": 0.2,
+      "mean_steps_to_success": 71.25
+    },
+    "disassemble-v3": {
+      "successes": 1,
+      "episodes": 20,
+      "success_rate": 0.05,
+      "mean_steps_to_success": 84.0
+    },
+    "door-close-v3": {
+      "successes": 15,
+      "episodes": 20,
+      "success_rate": 0.75,
+      "mean_steps_to_success": 91.86666666666666
+    },
+    "door-lock-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 83.15
+    },
+    "door-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 93.7
+    },
+    "door-unlock-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 50.7
+    },
+    "drawer-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 79.05
+    },
+    "drawer-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 88.05
+    },
+    "faucet-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 65.35
+    },
+    "faucet-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 59.6
+    },
+    "hammer-v3": {
+      "successes": 18,
+      "episodes": 20,
+      "success_rate": 0.9,
+      "mean_steps_to_success": 63.888888888888886
+    },
+    "hand-insert-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 60.0
+    },
+    "handle-press-side-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 43.75
+    },
+    "handle-press-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 30.4
+    },
+    "handle-pull-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 99.05
+    },
+    "handle-pull-side-v3": {
+      "successes": 13,
+      "episodes": 20,
+      "success_rate": 0.65,
+      "mean_steps_to_success": 81.3076923076923
+    },
+    "peg-insert-side-v3": {
+      "successes": 17,
+      "episodes": 20,
+      "success_rate": 0.85,
+      "mean_steps_to_success": 87.6470588235294
+    },
+    "lever-pull-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 72.25
+    },
+    "peg-unplug-side-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 93.9
+    },
+    "pick-out-of-hole-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 128.2
+    },
+    "pick-place-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 52.75
+    },
+    "pick-place-wall-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 81.35
+    },
+    "plate-slide-back-side-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 45.25
+    },
+    "plate-slide-back-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 61.05
+    },
+    "plate-slide-side-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 48.25
+    },
+    "plate-slide-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 51.95
+    },
+    "reach-v3": {
+      "successes": 18,
+      "episodes": 20,
+      "success_rate": 0.9,
+      "mean_steps_to_success": 56.333333333333336
+    },
+    "reach-wall-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 42.95
+    },
+    "push-back-v3": {
+      "successes": 10,
+      "episodes": 20,
+      "success_rate": 0.5,
+      "mean_steps_to_success": 81.3
+    },
+    "push-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 62.35
+    },
+    "push-wall-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 76.4
+    },
+    "shelf-place-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 87.85
+    },
+    "soccer-v3": {
+      "successes": 8,
+      "episodes": 20,
+      "success_rate": 0.4,
+      "mean_steps_to_success": 55.75
+    },
+    "stick-pull-v3": {
+      "successes": 16,
+      "episodes": 20,
+      "success_rate": 0.8,
+      "mean_steps_to_success": 121.6875
+    },
+    "stick-push-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 75.9
+    },
+    "sweep-into-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 55.85
+    },
+    "sweep-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 83.2
+    },
+    "window-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 82.95
+    },
+    "window-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 87.8
+    }
+  },
+  "overall": {
+    "successes": 910,
+    "episodes": 1000,
+    "success_rate": 0.91,
+    "mean_task_success_rate": 0.91
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "checkpoint": "/home/ggdev/PycharmProjects/VLA/checkpoints/mt50/best.pt",
+  "seed": 9160,
+  "episodes_per_task": 20,
+  "episode_horizon": 200,
+  "camera": "gripperPOV",
+  "prompt_index": 0,
+  "flow_steps": 10,
+  "num_tasks": 10,
+  "tasks": {
+    "reach-v3": {
+      "successes": 18,
+      "episodes": 20,
+      "success_rate": 0.9,
+      "mean_steps_to_success": 56.333333333333336
+    },
+    "push-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 62.35
+    },
+    "pick-place-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 52.75
+    },
+    "door-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 93.7
+    },
+    "drawer-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 88.05
+    },
+    "drawer-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 79.05
+    },
+    "button-press-topdown-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 64.5
+    },
+    "peg-insert-side-v3": {
+      "successes": 17,
+      "episodes": 20,
+      "success_rate": 0.85,
+      "mean_steps_to_success": 87.6470588235294
+    },
+    "window-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 87.8
+    },
+    "window-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0,
+      "mean_steps_to_success": 82.95
+    }
+  },
+  "overall": {
+    "successes": 195,
+    "episodes": 200,
+    "success_rate": 0.975,
+    "mean_task_success_rate": 0.975
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "checkpoint": "/home/ggdev/PycharmProjects/VLA/checkpoints/best_grad.pt",
+  "seed": 9160,
+  "episodes_per_task": 20,
+  "episode_horizon": 200,
+  "tasks": {
+    "reach-v3": {
+      "successes": 17,
+      "episodes": 20,
+      "success_rate": 0.85
+    },
+    "push-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "pick-place-v3": {
+      "successes": 19,
+      "episodes": 20,
+      "success_rate": 0.95
+    },
+    "door-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "drawer-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "drawer-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "button-press-topdown-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "peg-insert-side-v3": {
+      "successes": 8,
+      "episodes": 20,
+      "success_rate": 0.4
+    },
+    "window-open-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    },
+    "window-close-v3": {
+      "successes": 20,
+      "episodes": 20,
+      "success_rate": 1.0
+    }
+  },
+  "overall": {
+    "successes": 184,
+    "episodes": 200,
+    "success_rate": 0.92
+  }
+}

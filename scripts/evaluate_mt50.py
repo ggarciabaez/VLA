@@ -25,12 +25,21 @@ TASK_PROMPTS = ROOT / "data/dataset_shards/mt50/task_prompts.json"
 DEFAULT_CHECKPOINT = ROOT / "checkpoints/mt50/best.pt"
 N_MT50_TASKS = 50
 RAW_OBS_DIM = 39  # Meta-World v3: 18 current + 18 previous-frame + 3 goal
-
+TASK_SELECT = ['assembly-v3', 'basketball-v3', 'bin-picking-v3', 'box-close-v3', 'button-press-topdown-v3',
+               'button-press-topdown-wall-v3', 'button-press-v3', 'button-press-wall-v3', 'coffee-button-v3',
+               'coffee-pull-v3', 'coffee-push-v3', 'dial-turn-v3', 'disassemble-v3', 'door-close-v3', 'door-lock-v3',
+               'door-open-v3', 'door-unlock-v3', 'drawer-close-v3', 'drawer-open-v3', 'faucet-close-v3', 'faucet-open-v3',
+               'hammer-v3', 'hand-insert-v3', 'handle-press-side-v3', 'handle-press-v3', 'handle-pull-v3',
+               'handle-pull-side-v3', 'peg-insert-side-v3', 'lever-pull-v3', 'peg-unplug-side-v3', 'pick-out-of-hole-v3',
+               'pick-place-v3', 'pick-place-wall-v3', 'plate-slide-back-side-v3', 'plate-slide-back-v3', 'plate-slide-side-v3',
+               'plate-slide-v3', 'reach-v3', 'reach-wall-v3', 'push-back-v3', 'push-v3', 'push-wall-v3', 'shelf-place-v3',
+               'soccer-v3', 'stick-pull-v3', 'stick-push-v3', 'sweep-into-v3', 'sweep-v3', 'window-close-v3', 'window-open-v3']
+TASK_SELECT = TASK_SELECT[40:]
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
-    parser.add_argument("--episodes", type=int, default=10,
+    parser.add_argument("--episodes", type=int, default=20,
                         help="Evaluation episodes per task (default: 10).")
     parser.add_argument("--horizon", type=int, default=200,
                         help="Maximum environment steps per episode (default: 200).")
@@ -40,11 +49,11 @@ def parse_args():
                         help="Subset of MT50 task names (default: all 50).")
     parser.add_argument("--prompt-index", type=int, default=0,
                         help="Which prompt variant to use from the prompts file (default: 0).")
-    parser.add_argument("--flow-steps", type=int, default=1,
+    parser.add_argument("--flow-steps", type=int, default=10,
                         help="Flow-matching integration steps at inference (default: 1).")
     parser.add_argument("--iterate-goals", action="store_true",
                         help="Call iterate_goal_position() on the vector env before each episode.")
-    parser.add_argument("--output", type=Path, default=Path("./eval_mt50.json"),
+    parser.add_argument("--output", type=Path, default=Path("./acc/eval_mt50.json"),
                         help="JSON report path (rewritten after every episode).")
     parser.add_argument("--prompts", type=Path, default=TASK_PROMPTS)
     parser.add_argument("--eager", action="store_true",
@@ -56,7 +65,8 @@ def parse_args():
 
 
 def select_tasks(requested):
-    return ["reach-v3", "push-v3", "pick-place-v3"]
+    if TASK_SELECT is not None:
+        return TASK_SELECT
     all_tasks = list(MT50().train_classes.keys())
     if len(all_tasks) != N_MT50_TASKS:
         raise RuntimeError(f"Expected {N_MT50_TASKS} MT50 tasks, got {len(all_tasks)}")
@@ -233,7 +243,7 @@ def main():
                 image_t = torch.from_numpy(images).permute(0, 3, 1, 2).to(device)
                 state_t = torch.as_tensor(obs[:, :cfg.state_dim], device=device, dtype=torch.float32)
                 state_t = (state_t - stats["state_mean"]) / stats["state_std"]
-                print(image_t.shape, tokens.shape, state_t.shape)
+
                 with torch.inference_mode():
                     if device.type == "cuda":
                         with torch.autocast("cuda", dtype=torch.bfloat16):
