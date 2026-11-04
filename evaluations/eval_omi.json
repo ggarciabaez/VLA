@@ -75,16 +75,16 @@
       "mean_steps_to_success": 53.75
     },
     "dial-turn-v3": {
-      "successes": 4,
+      "successes": 19,
       "episodes": 20,
-      "success_rate": 0.2,
-      "mean_steps_to_success": 71.25
+      "success_rate": 0.95,
+      "mean_steps_to_success": 581.99
     },
     "disassemble-v3": {
-      "successes": 1,
+      "successes": 18,
       "episodes": 20,
-      "success_rate": 0.05,
-      "mean_steps_to_success": 84.0
+      "success_rate": 0.9,
+      "mean_steps_to_success": 113.77
     },
     "door-close-v3": {
       "successes": 15,
@@ -243,10 +243,10 @@
       "mean_steps_to_success": 42.95
     },
     "push-back-v3": {
-      "successes": 10,
+      "successes": 14,
       "episodes": 20,
-      "success_rate": 0.5,
-      "mean_steps_to_success": 81.3
+      "success_rate": 0.7,
+      "mean_steps_to_success": 589.712
     },
     "push-v3": {
       "successes": 20,
@@ -310,9 +310,12 @@
     }
   },
   "overall": {
-    "successes": 910,
+    "successes": 946,
     "episodes": 1000,
-    "success_rate": 0.91,
-    "mean_task_success_rate": 0.91
+    "success_rate": 0.946,
+
+    "mean_steps_to_success": 94.55,
+    "median_task_success_rate": 1.0,
+    "task_success_std": 0.013384
   }
 }

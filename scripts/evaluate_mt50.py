@@ -21,7 +21,7 @@ from model.vla import VLA
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TASK_PROMPTS = ROOT / "data/dataset_shards/mt50/task_prompts.json"
+TASK_PROMPTS = ROOT / "task_prompts.json"
 DEFAULT_CHECKPOINT = ROOT / "checkpoints/mt50/best.pt"
 N_MT50_TASKS = 50
 RAW_OBS_DIM = 39  # Meta-World v3: 18 current + 18 previous-frame + 3 goal
@@ -34,7 +34,8 @@ TASK_SELECT = ['assembly-v3', 'basketball-v3', 'bin-picking-v3', 'box-close-v3',
                'pick-place-v3', 'pick-place-wall-v3', 'plate-slide-back-side-v3', 'plate-slide-back-v3', 'plate-slide-side-v3',
                'plate-slide-v3', 'reach-v3', 'reach-wall-v3', 'push-back-v3', 'push-v3', 'push-wall-v3', 'shelf-place-v3',
                'soccer-v3', 'stick-pull-v3', 'stick-push-v3', 'sweep-into-v3', 'sweep-v3', 'window-close-v3', 'window-open-v3']
-TASK_SELECT = TASK_SELECT[40:]
+# TASK_SELECT = TASK_SELECT[40:]
+TASK_SELECT = ['disassemble-v3', 'dial-turn-v3', 'soccer-v3', 'push-back-v3', 'handle-pull-side-v3']
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -250,11 +251,11 @@ def main():
                             action_chunk = model.act(image_t, tokens, state_t)
                     else:
                         action_chunk = model.act(image_t, tokens, state_t)
-                actions = (action_chunk[:, 0] * stats["action_std"] + stats["action_mean"])
-                actions = np.clip(actions.float().cpu().numpy(), -1.0, 1.0)
-                actions[~active] = 0.0  # finished tasks idle until the slowest one is done
-
-                obs, _reward, terminated, truncated, info = envs.step(actions)
+                for i in range(action_chunk.shape[1]):
+                    actions = (action_chunk[:, i] * stats["action_std"] + stats["action_mean"])
+                    actions = np.clip(actions.float().cpu().numpy(), -1.0, 1.0)
+                    actions[~active] = 0.0  # finished tasks idle until the slowest one is done
+                    obs, _reward, terminated, truncated, info = envs.step(actions)
                 obs = parse_obs(obs)
 
                 step_success = extract_success(info, n_tasks) & active

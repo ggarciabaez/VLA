@@ -23,8 +23,8 @@ CFG = dict(
         checkpoint   = "./checkpoints/mt50/best.pt",
 
         # task
-        env_name     = "peg-unplug-side-v3",
-        prompt       = "",  # Leave blank for prewritten prompt matching the task.
+        env_name     = "door-open-v3",
+        prompt       = "unlock the lock and swing the door open",  # Leave blank for prewritten prompt matching the task.
         seed         = 37,
 
         # visualization
@@ -113,8 +113,8 @@ def run_task(model, tok_t, CFG):
             oimg = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             gripimg = np.array(gripenv.render())
             gripimg = cv2.rotate(cv2.cvtColor(gripimg, cv2.COLOR_RGB2BGR), cv2.ROTATE_180)
-            cv2.imshow("img", oimg)
-            cv2.imshow("gripimg", gripimg)
+            o = np.hstack((oimg, gripimg))
+            cv2.imshow("img", o)
             cv2.waitKey(16)
             if N == -1 and info["success"] > 0.5:
                 N = 10  # countdown.

@@ -37,5 +37,6 @@ htmlcov/
 # Environment variables
 .env
 .env.local
-/sandbox/
-/sandbox/
+sandbox/
+data/
+checkpoints/
